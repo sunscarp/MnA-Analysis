@@ -8,3 +8,4 @@ groq
 pydantic
 openpyxl
 reportlab
+matplotlib
