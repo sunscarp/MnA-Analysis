@@ -23,6 +23,13 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from io import BytesIO
 
+try:
+    # Prefer Kaleido for deterministic server-side image export.
+    pio.kaleido.scope.default_format = 'png'
+except Exception:
+    # Keep running if Kaleido is unavailable at import time.
+    pass
+
 # ─────────────────────────────────────────────
 #  FONT REGISTRATION  (FreeSans supports ₹)
 # ─────────────────────────────────────────────
@@ -52,14 +59,59 @@ def _ensure_fonts():
     global _FONTS_REGISTERED, FONT_REGULAR, FONT_BOLD, FONT_OBLIQUE, FONT_BOLD_OBLIQUE
     if _FONTS_REGISTERED:
         return
+
+    # Force FreeSans first on Linux to maximize Unicode coverage (including rupee symbol).
+    free_sans_regular = Path('/usr/share/fonts/truetype/freefont/FreeSans.ttf')
+    free_sans_bold = Path('/usr/share/fonts/truetype/freefont/FreeSansBold.ttf')
+    free_sans_italic = Path('/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf')
+    free_sans_bold_italic = Path('/usr/share/fonts/truetype/freefont/FreeSansBoldOblique.ttf')
+
+    if all(path.exists() for path in (free_sans_regular, free_sans_bold, free_sans_italic, free_sans_bold_italic)):
+        try:
+            _register_font_family(
+                'FreeSans',
+                free_sans_regular,
+                free_sans_bold,
+                free_sans_italic,
+                free_sans_bold_italic,
+            )
+            FONT_REGULAR = 'FreeSans'
+            FONT_BOLD = 'FreeSans-Bold'
+            FONT_OBLIQUE = 'FreeSans-Oblique'
+            FONT_BOLD_OBLIQUE = 'FreeSans-BoldOblique'
+            _FONTS_REGISTERED = True
+            print('FreeSans registered successfully (rupee support enabled).')
+            return
+        except Exception as e:
+            print(f'FreeSans registration failed: {e}')
+
+    bundled_noto = Path(__file__).resolve().parent.parent / 'fonts' / 'NotoSans-Regular.ttf'
+    if bundled_noto.exists():
+        try:
+            # Register regular file for all faces as a robust fallback when only one TTF is bundled.
+            pdfmetrics.registerFont(TTFont('NotoSans', str(bundled_noto)))
+            pdfmetrics.registerFont(TTFont('NotoSans-Bold', str(bundled_noto)))
+            pdfmetrics.registerFont(TTFont('NotoSans-Oblique', str(bundled_noto)))
+            pdfmetrics.registerFont(TTFont('NotoSans-BoldOblique', str(bundled_noto)))
+            from reportlab.pdfbase.pdfmetrics import registerFontFamily
+            registerFontFamily(
+                'NotoSans',
+                normal='NotoSans',
+                bold='NotoSans-Bold',
+                italic='NotoSans-Oblique',
+                boldItalic='NotoSans-BoldOblique',
+            )
+            FONT_REGULAR = 'NotoSans'
+            FONT_BOLD = 'NotoSans-Bold'
+            FONT_OBLIQUE = 'NotoSans-Oblique'
+            FONT_BOLD_OBLIQUE = 'NotoSans-BoldOblique'
+            _FONTS_REGISTERED = True
+            print('Bundled NotoSans registered successfully.')
+            return
+        except Exception as e:
+            print(f'Bundled NotoSans registration failed: {e}')
+
     candidates = [
-        (
-            'FreeSans',
-            Path('/usr/share/fonts/truetype/freefont/FreeSans.ttf'),
-            Path('/usr/share/fonts/truetype/freefont/FreeSansBold.ttf'),
-            Path('/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf'),
-            Path('/usr/share/fonts/truetype/freefont/FreeSansBoldOblique.ttf'),
-        ),
         (
             'SegoeUI',
             Path(r'C:\WINDOWS\Fonts\segoeui.ttf'),
@@ -558,7 +610,7 @@ class MAReportGenerator:
     def _football_field_image(self):
         try:
             fig = self.val_model.create_football_field(self.dcf2, self.comps2, self.precedent2)
-            img_bytes = pio.to_image(fig, format='png', width=900, height=420, scale=2)
+            img_bytes = pio.to_image(fig, format='png', engine='kaleido', width=900, height=420, scale=2)
             return Image(BytesIO(img_bytes), width=6.2 * inch, height=2.9 * inch)
         except Exception as e:
             print(f'Football field unavailable: {e}')
@@ -567,7 +619,7 @@ class MAReportGenerator:
     def _sensitivity_image(self):
         try:
             fig = self.val_model.create_sensitivity_heatmap(self.dcf2)
-            img_bytes = pio.to_image(fig, format='png', width=900, height=480, scale=2)
+            img_bytes = pio.to_image(fig, format='png', engine='kaleido', width=900, height=480, scale=2)
             return Image(BytesIO(img_bytes), width=6.2 * inch, height=3.3 * inch)
         except Exception as e:
             print(f'Sensitivity chart unavailable: {e}')
