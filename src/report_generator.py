@@ -23,13 +23,6 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from io import BytesIO
 
-try:
-    # Prefer Kaleido for deterministic server-side image export.
-    pio.kaleido.scope.default_format = 'png'
-except Exception:
-    # Keep running if Kaleido is unavailable at import time.
-    pass
-
 # ─────────────────────────────────────────────
 #  FONT REGISTRATION  (FreeSans supports ₹)
 # ─────────────────────────────────────────────
@@ -59,59 +52,14 @@ def _ensure_fonts():
     global _FONTS_REGISTERED, FONT_REGULAR, FONT_BOLD, FONT_OBLIQUE, FONT_BOLD_OBLIQUE
     if _FONTS_REGISTERED:
         return
-
-    # Force FreeSans first on Linux to maximize Unicode coverage (including rupee symbol).
-    free_sans_regular = Path('/usr/share/fonts/truetype/freefont/FreeSans.ttf')
-    free_sans_bold = Path('/usr/share/fonts/truetype/freefont/FreeSansBold.ttf')
-    free_sans_italic = Path('/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf')
-    free_sans_bold_italic = Path('/usr/share/fonts/truetype/freefont/FreeSansBoldOblique.ttf')
-
-    if all(path.exists() for path in (free_sans_regular, free_sans_bold, free_sans_italic, free_sans_bold_italic)):
-        try:
-            _register_font_family(
-                'FreeSans',
-                free_sans_regular,
-                free_sans_bold,
-                free_sans_italic,
-                free_sans_bold_italic,
-            )
-            FONT_REGULAR = 'FreeSans'
-            FONT_BOLD = 'FreeSans-Bold'
-            FONT_OBLIQUE = 'FreeSans-Oblique'
-            FONT_BOLD_OBLIQUE = 'FreeSans-BoldOblique'
-            _FONTS_REGISTERED = True
-            print('FreeSans registered successfully (rupee support enabled).')
-            return
-        except Exception as e:
-            print(f'FreeSans registration failed: {e}')
-
-    bundled_noto = Path(__file__).resolve().parent.parent / 'fonts' / 'NotoSans-Regular.ttf'
-    if bundled_noto.exists():
-        try:
-            # Register regular file for all faces as a robust fallback when only one TTF is bundled.
-            pdfmetrics.registerFont(TTFont('NotoSans', str(bundled_noto)))
-            pdfmetrics.registerFont(TTFont('NotoSans-Bold', str(bundled_noto)))
-            pdfmetrics.registerFont(TTFont('NotoSans-Oblique', str(bundled_noto)))
-            pdfmetrics.registerFont(TTFont('NotoSans-BoldOblique', str(bundled_noto)))
-            from reportlab.pdfbase.pdfmetrics import registerFontFamily
-            registerFontFamily(
-                'NotoSans',
-                normal='NotoSans',
-                bold='NotoSans-Bold',
-                italic='NotoSans-Oblique',
-                boldItalic='NotoSans-BoldOblique',
-            )
-            FONT_REGULAR = 'NotoSans'
-            FONT_BOLD = 'NotoSans-Bold'
-            FONT_OBLIQUE = 'NotoSans-Oblique'
-            FONT_BOLD_OBLIQUE = 'NotoSans-BoldOblique'
-            _FONTS_REGISTERED = True
-            print('Bundled NotoSans registered successfully.')
-            return
-        except Exception as e:
-            print(f'Bundled NotoSans registration failed: {e}')
-
     candidates = [
+        (
+            'FreeSans',
+            Path('/usr/share/fonts/truetype/freefont/FreeSans.ttf'),
+            Path('/usr/share/fonts/truetype/freefont/FreeSansBold.ttf'),
+            Path('/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf'),
+            Path('/usr/share/fonts/truetype/freefont/FreeSansBoldOblique.ttf'),
+        ),
         (
             'SegoeUI',
             Path(r'C:\WINDOWS\Fonts\segoeui.ttf'),
@@ -605,25 +553,167 @@ class MAReportGenerator:
     def _section(self, label):
         return section_rule(self.S, label)
 
+    def _plotly_fig_to_rl_image(self, fig, width_px, height_px, width_in, height_in):
+        """Convert Plotly figure to ReportLab image with explicit kaleido engine."""
+        img_bytes = pio.to_image(
+            fig,
+            format='png',
+            width=width_px,
+            height=height_px,
+            scale=2,
+            engine='kaleido',
+        )
+        return Image(BytesIO(img_bytes), width=width_in, height=height_in)
+
+    def _football_field_fallback_image(self):
+        """Matplotlib fallback for environments where Plotly static export is unavailable."""
+        dcf_value = self.dcf2.per_share
+        comps_value = self.comps2.per_share_weighted
+        precedent_value = self.precedent2.per_share_with_premium
+        current_price = self.dcf2.current_price
+
+        dcf_low = dcf_value * 0.85
+        dcf_high = dcf_value * 1.15
+
+        comps_low = self.comps2.per_share_range[0] if self.comps2.per_share_range[0] > 0 else comps_value * 0.8
+        comps_high = self.comps2.per_share_range[1] if self.comps2.per_share_range[1] > 0 else comps_value * 1.2
+
+        prec_low = self.precedent2.per_share_range[0] if self.precedent2.per_share_range[0] > 0 else precedent_value * 0.8
+        prec_high = self.precedent2.per_share_range[1] if self.precedent2.per_share_range[1] > 0 else precedent_value * 1.2
+
+        methods = ['DCF', 'Trading Comps', 'Precedent Transactions']
+        lows = [dcf_low, comps_low, prec_low]
+        highs = [dcf_high, comps_high, prec_high]
+        colors = ['#00B4FF', '#0EA5E9', '#14B8A6']
+
+        fig, ax = plt.subplots(figsize=(9, 4.2))
+        y = np.arange(len(methods))
+
+        for i in range(len(methods)):
+            width = max(0, highs[i] - lows[i])
+            ax.barh(y[i], width, left=lows[i], color=colors[i], alpha=0.78, height=0.55)
+            ax.text(
+                lows[i] + width / 2 if width > 0 else lows[i],
+                y[i],
+                f'₹{(lows[i] + width):,.0f}',
+                va='center',
+                ha='center',
+                fontsize=8,
+                color='white',
+                fontweight='bold',
+            )
+
+        if current_price and current_price > 0:
+            ax.axvline(current_price, color='#1A3A6B', linestyle='--', linewidth=1.8)
+            ax.text(current_price, len(methods) - 0.35, f'Current ₹{current_price:,.0f}',
+                    fontsize=7.5, color='#1A3A6B', ha='left', va='bottom')
+
+        valid_values = [v for v in [dcf_value, comps_value, precedent_value] if v > 0]
+        if valid_values:
+            weighted_avg = float(np.mean(valid_values))
+            ax.axvline(weighted_avg, color='#6B7280', linestyle=':', linewidth=1.8)
+            ax.text(weighted_avg, -0.35, f'Avg ₹{weighted_avg:,.0f}',
+                    fontsize=7.5, color='#6B7280', ha='left', va='top')
+
+        ax.set_yticks(y)
+        ax.set_yticklabels(methods)
+        _ib_chart_style(ax, title='Valuation Football Field', xlabel='Value per Share (₹)')
+        ax.grid(axis='x', color='#E5E7EB', linewidth=0.7, linestyle='--')
+        ax.invert_yaxis()
+        plt.tight_layout()
+        return _fig_to_image(fig, width=6.2 * inch, height=2.9 * inch)
+
+    def _sensitivity_fallback_image(self):
+        """Matplotlib fallback heatmap for WACC / growth sensitivity."""
+        matrix = self.dcf2.sensitivity_matrix or {}
+        wacc_vars = matrix.get('wacc_variations', [])
+        growth_vars = matrix.get('growth_variations', [])
+        value_factors = matrix.get('values', {})
+
+        if not wacc_vars:
+            wacc_vars = [self.dcf2.wacc - 0.01, self.dcf2.wacc, self.dcf2.wacc + 0.01]
+        if not growth_vars:
+            growth_vars = [
+                self.dcf2.terminal_growth - 0.005,
+                self.dcf2.terminal_growth,
+                self.dcf2.terminal_growth + 0.005,
+            ]
+
+        values = []
+        for w in wacc_vars:
+            row = []
+            for g in growth_vars:
+                if w in value_factors and g in value_factors.get(w, {}):
+                    val = value_factors[w][g]
+                else:
+                    if w > 0:
+                        val = self.dcf2.per_share * (self.dcf2.wacc / w) * ((1 + g) / (1 + self.dcf2.terminal_growth))
+                    else:
+                        val = self.dcf2.per_share
+                row.append(val)
+            values.append(row)
+
+        arr = np.array(values, dtype=float)
+        fig, ax = plt.subplots(figsize=(8.5, 4.6))
+        im = ax.imshow(arr, cmap='RdYlGn', aspect='auto')
+
+        ax.set_xticks(np.arange(len(growth_vars)))
+        ax.set_yticks(np.arange(len(wacc_vars)))
+        ax.set_xticklabels([f'{g:.1%}' for g in growth_vars])
+        ax.set_yticklabels([f'{w:.1%}' for w in wacc_vars])
+
+        for i in range(arr.shape[0]):
+            for j in range(arr.shape[1]):
+                ax.text(j, i, f'₹{arr[i, j]:,.0f}', ha='center', va='center', fontsize=7.5, color='#0A1628')
+
+        _ib_chart_style(
+            ax,
+            title='DCF Sensitivity: WACC vs Terminal Growth',
+            xlabel='Terminal Growth Rate',
+            ylabel='WACC',
+        )
+        cbar = fig.colorbar(im, ax=ax, shrink=0.9)
+        cbar.set_label('Per Share Value (₹)', fontsize=8)
+        plt.tight_layout()
+        return _fig_to_image(fig, width=6.2 * inch, height=3.3 * inch)
+
     # ── Chart generators ─────────────────────
 
     def _football_field_image(self):
         try:
             fig = self.val_model.create_football_field(self.dcf2, self.comps2, self.precedent2)
-            img_bytes = pio.to_image(fig, format='png', engine='kaleido', width=900, height=420, scale=2)
-            return Image(BytesIO(img_bytes), width=6.2 * inch, height=2.9 * inch)
+            return self._plotly_fig_to_rl_image(
+                fig,
+                width_px=900,
+                height_px=420,
+                width_in=6.2 * inch,
+                height_in=2.9 * inch,
+            )
         except Exception as e:
-            print(f'Football field unavailable: {e}')
-            return Paragraph('Chart unavailable.', self.S['body_small'])
+            print(f'Football field Plotly export failed, using fallback: {e}')
+            try:
+                return self._football_field_fallback_image()
+            except Exception as fallback_err:
+                print(f'Football field unavailable: {fallback_err}')
+                return Paragraph('Chart unavailable.', self.S['body_small'])
 
     def _sensitivity_image(self):
         try:
             fig = self.val_model.create_sensitivity_heatmap(self.dcf2)
-            img_bytes = pio.to_image(fig, format='png', engine='kaleido', width=900, height=480, scale=2)
-            return Image(BytesIO(img_bytes), width=6.2 * inch, height=3.3 * inch)
+            return self._plotly_fig_to_rl_image(
+                fig,
+                width_px=900,
+                height_px=480,
+                width_in=6.2 * inch,
+                height_in=3.3 * inch,
+            )
         except Exception as e:
-            print(f'Sensitivity chart unavailable: {e}')
-            return Paragraph('Chart unavailable.', self.S['body_small'])
+            print(f'Sensitivity Plotly export failed, using fallback: {e}')
+            try:
+                return self._sensitivity_fallback_image()
+            except Exception as fallback_err:
+                print(f'Sensitivity chart unavailable: {fallback_err}')
+                return Paragraph('Chart unavailable.', self.S['body_small'])
 
     def _dcf_waterfall_image(self):
         try:
