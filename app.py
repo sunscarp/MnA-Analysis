@@ -1411,15 +1411,24 @@ if st.session_state.get("run_analysis", False):
         )
         st.session_state.assumptions_source_ticker = ticker2
     
-    # Initialize synergy values if not exists
-    if "synergy_values" not in st.session_state:
+    # Seed synergy values from the target company so PDF generation has
+    # meaningful defaults even before the Synergies tab is opened.
+    synergy_values = st.session_state.get("synergy_values")
+    if not synergy_values or all(float(value or 0) == 0 for value in synergy_values.values()):
+        target_metrics = company2.get_key_metrics() if company2.success else {}
+        target_rev = target_metrics.get("revenue", 0) or 0
+        if target_rev <= 0:
+            target_rev = 100e9
+        target_costs = target_rev * 0.75
+        default_rev_syn = target_rev * 0.10
+        default_cost_syn = target_costs * 0.15
         st.session_state.synergy_values = {
-            "annual_rev": 0,
-            "annual_cost": 0,
-            "annual_total": 0,
-            "pv_total": 0,
-            "pv_rev": 0,
-            "pv_cost": 0
+            "annual_rev": default_rev_syn,
+            "annual_cost": default_cost_syn,
+            "annual_total": default_rev_syn + default_cost_syn,
+            "pv_rev": default_rev_syn * 6,
+            "pv_cost": default_cost_syn * 6,
+            "pv_total": (default_rev_syn + default_cost_syn) * 6,
         }
     
     # Run valuations if not cached
@@ -1717,35 +1726,36 @@ if st.session_state.get("run_analysis", False):
         
         # Football field
         st.markdown("#### Valuation Football Field")
-        fig = val_model.create_football_field(dcf2, comps2, precedent2)
-        st.plotly_chart(
-            fig,
-            use_container_width=True,
-            config={
-                "displaylogo": False,
-                "modeBarButtonsToRemove": [
-                    "zoom2d", "pan2d", "select2d", "lasso2d", "zoomIn2d", "zoomOut2d",
-                    "autoScale2d", "resetScale2d", "hoverClosestCartesian", "hoverCompareCartesian",
-                    "toggleSpikelines"
-                ],
-            },
-        )
+        try:
+            fig = val_model.create_football_field(dcf2, comps2, precedent2)
+            if fig is not None:
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    config={"displaylogo": False, "responsive": True, "displayModeBar": True},
+                    key="football_field_chart"
+                )
+            else:
+                st.info("Football field chart data is temporarily unavailable.")
+        except Exception as e:
+            st.warning(f"⚠️ Football Field chart failed to render in this environment: {e}")
+            st.caption("This usually indicates a missing Plotly dependency on the deployment server.")
         
         # Sensitivity analysis
         with st.expander("Sensitivity Analysis", expanded=False):
-            fig_sens = val_model.create_sensitivity_heatmap(dcf2)
-            st.plotly_chart(
-                fig_sens,
-                use_container_width=True,
-                config={
-                    "displaylogo": False,
-                    "modeBarButtonsToRemove": [
-                        "zoom2d", "pan2d", "select2d", "lasso2d", "zoomIn2d", "zoomOut2d",
-                        "autoScale2d", "resetScale2d", "hoverClosestCartesian", "hoverCompareCartesian",
-                        "toggleSpikelines"
-                    ],
-                },
-            )
+            try:
+                fig_sens = val_model.create_sensitivity_heatmap(dcf2)
+                if fig_sens is not None:
+                    st.plotly_chart(
+                        fig_sens,
+                        use_container_width=True,
+                        config={"displaylogo": False, "responsive": True, "displayModeBar": True},
+                        key="sensitivity_chart"
+                    )
+                else:
+                    st.info("Sensitivity analysis data is temporarily unavailable.")
+            except Exception as e:
+                st.warning(f"⚠️ Sensitivity chart failed to render: {e}")
         
         # Detailed FCF table
         with st.expander("Detailed FCF Projections", expanded=False):
@@ -1819,13 +1829,22 @@ if st.session_state.get("run_analysis", False):
 
         def get_synergy_values():
             """Capture current synergy values for report"""
+            annual_total = annual_rev_synergy + annual_cost_synergy
+            if annual_total > 0:
+                rev_share = annual_rev_synergy / annual_total
+                cost_share = annual_cost_synergy / annual_total
+                pv_rev = total_pv_synergy * rev_share
+                pv_cost = total_pv_synergy * cost_share
+            else:
+                pv_rev = 0
+                pv_cost = 0
             return {
                 "annual_rev": annual_rev_synergy,
                 "annual_cost": annual_cost_synergy,
-                "annual_total": total_annual_synergy,
+                "annual_total": annual_total,
                 "pv_total": total_pv_synergy,
-                "pv_rev": pv_synergy * 0.6,
-                "pv_cost": pv_synergy * 0.4
+                "pv_rev": pv_rev,
+                "pv_cost": pv_cost,
             }
 
         # Update synergy values in session state

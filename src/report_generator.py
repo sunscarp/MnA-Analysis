@@ -98,20 +98,20 @@ def _ensure_fonts():
 _ensure_fonts()
 
 # Helper function to format currency
-def format_currency(amount, suffix=''):
-    """Format currency with Rs. symbol"""
+def format_currency(amount, suffix='B'):
+    """Format currency with Rs. symbol without duplicate suffixes"""
     try:
         if amount is None:
             return f'{CURRENCY_SYMBOL}0'
         amount = float(amount)
         if abs(amount) >= 1e9:
-            return f'{CURRENCY_SYMBOL}{amount/1e9:,.1f}B{suffix}'
+            return f'{CURRENCY_SYMBOL}{amount/1e9:,.1f}{suffix}'
         elif abs(amount) >= 1e7:
-            return f'{CURRENCY_SYMBOL}{amount/1e7:,.1f}Cr{suffix}'
+            return f'{CURRENCY_SYMBOL}{amount/1e7:,.1f}Cr'
         elif abs(amount) >= 1e5:
-            return f'{CURRENCY_SYMBOL}{amount/1e5:,.1f}L{suffix}'
+            return f'{CURRENCY_SYMBOL}{amount/1e5:,.1f}L'
         else:
-            return f'{CURRENCY_SYMBOL}{amount:,.0f}{suffix}'
+            return f'{CURRENCY_SYMBOL}{amount:,.0f}'
     except:
         return f'{CURRENCY_SYMBOL}0'
 
