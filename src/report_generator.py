@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 
 # ─────────────────────────────────────────────
-#  FONT REGISTRATION  (FreeSans supports ₹)
+#  FONT REGISTRATION  (Use standard fonts with Rs. instead of ₹)
 # ─────────────────────────────────────────────
 _FONTS_REGISTERED = False
 
@@ -33,20 +33,26 @@ FONT_BOLD         = 'Helvetica-Bold'
 FONT_OBLIQUE      = 'Helvetica-Oblique'
 FONT_BOLD_OBLIQUE = 'Helvetica-BoldOblique'
 
+# Currency symbol to use (Rs. instead of ₹)
+CURRENCY_SYMBOL = 'Rs.'
 
 def _register_font_family(family_name, regular_path, bold_path, italic_path, bold_italic_path):
-    pdfmetrics.registerFont(TTFont(f'{family_name}', str(regular_path)))
-    pdfmetrics.registerFont(TTFont(f'{family_name}-Bold', str(bold_path)))
-    pdfmetrics.registerFont(TTFont(f'{family_name}-Oblique', str(italic_path)))
-    pdfmetrics.registerFont(TTFont(f'{family_name}-BoldOblique', str(bold_italic_path)))
-    from reportlab.pdfbase.pdfmetrics import registerFontFamily
-    registerFontFamily(
-        family_name,
-        normal=f'{family_name}',
-        bold=f'{family_name}-Bold',
-        italic=f'{family_name}-Oblique',
-        boldItalic=f'{family_name}-BoldOblique',
-    )
+    try:
+        pdfmetrics.registerFont(TTFont(f'{family_name}', str(regular_path)))
+        pdfmetrics.registerFont(TTFont(f'{family_name}-Bold', str(bold_path)))
+        pdfmetrics.registerFont(TTFont(f'{family_name}-Oblique', str(italic_path)))
+        pdfmetrics.registerFont(TTFont(f'{family_name}-BoldOblique', str(bold_italic_path)))
+        from reportlab.pdfbase.pdfmetrics import registerFontFamily
+        registerFontFamily(
+            family_name,
+            normal=f'{family_name}',
+            bold=f'{family_name}-Bold',
+            italic=f'{family_name}-Oblique',
+            boldItalic=f'{family_name}-BoldOblique',
+        )
+        return True
+    except Exception:
+        return False
 
 def _ensure_fonts():
     global _FONTS_REGISTERED, FONT_REGULAR, FONT_BOLD, FONT_OBLIQUE, FONT_BOLD_OBLIQUE
@@ -68,37 +74,46 @@ def _ensure_fonts():
             Path(r'C:\WINDOWS\Fonts\segoeuiz.ttf'),
         ),
     ]
-    last_error = None
+    
     for family_name, regular_path, bold_path, italic_path, bold_italic_path in candidates:
         if not all(path.exists() for path in (regular_path, bold_path, italic_path, bold_italic_path)):
             continue
-        try:
-            _register_font_family(family_name, regular_path, bold_path, italic_path, bold_italic_path)
+        if _register_font_family(family_name, regular_path, bold_path, italic_path, bold_italic_path):
             FONT_REGULAR = family_name
             FONT_BOLD = f'{family_name}-Bold'
             FONT_OBLIQUE = f'{family_name}-Oblique'
             FONT_BOLD_OBLIQUE = f'{family_name}-BoldOblique'
             _FONTS_REGISTERED = True
             return
-        except Exception as e:
-            last_error = e
 
+    # Fallback to Helvetica
     FONT_REGULAR = 'Helvetica'
     FONT_BOLD = 'Helvetica-Bold'
     FONT_OBLIQUE = 'Helvetica-Oblique'
     FONT_BOLD_OBLIQUE = 'Helvetica-BoldOblique'
     _FONTS_REGISTERED = True
-    try:
-        if last_error:
-            print(f"Warning: could not register Unicode fonts: {last_error}. Falling back to Helvetica.")
-        else:
-            print("Warning: could not find Unicode fonts. Falling back to Helvetica; rupee symbols may not render.")
-    except Exception as e:
-        print(f"Warning: font fallback initialization failed: {e}")
+    print("Note: Using Helvetica fonts with Rs. currency symbol")
 
 # Call once at import time
 _ensure_fonts()
 
+# Helper function to format currency
+def format_currency(amount, suffix=''):
+    """Format currency with Rs. symbol"""
+    try:
+        if amount is None:
+            return f'{CURRENCY_SYMBOL}0'
+        amount = float(amount)
+        if abs(amount) >= 1e9:
+            return f'{CURRENCY_SYMBOL}{amount/1e9:,.1f}B{suffix}'
+        elif abs(amount) >= 1e7:
+            return f'{CURRENCY_SYMBOL}{amount/1e7:,.1f}Cr{suffix}'
+        elif abs(amount) >= 1e5:
+            return f'{CURRENCY_SYMBOL}{amount/1e5:,.1f}L{suffix}'
+        else:
+            return f'{CURRENCY_SYMBOL}{amount:,.0f}{suffix}'
+    except:
+        return f'{CURRENCY_SYMBOL}0'
 
 # ─────────────────────────────────────────────
 #  BRAND PALETTE  (Goldman / JPMorgan inspired)
@@ -123,10 +138,6 @@ CAUTION_AMBER     = colors.HexColor('#B45309')
 
 # ─────────────────────────────────────────────
 #  PAGE TEMPLATE
-#  FIX: Two separate PageTemplates — one for the
-#  cover (canvas-drawn, no chrome), one for all
-#  body pages (with header/footer chrome).
-#  The cover template is ONLY applied to page 1.
 # ─────────────────────────────────────────────
 
 class IBDocTemplate(BaseDocTemplate):
@@ -139,13 +150,11 @@ class IBDocTemplate(BaseDocTemplate):
     def __init__(self, filename, acquirer_name, target_name, cover_callback, **kwargs):
         self.acquirer_name   = acquirer_name
         self.target_name     = target_name
-        self._cover_callback = cover_callback  # callable(canv, doc)
+        self._cover_callback = cover_callback
         BaseDocTemplate.__init__(self, filename, **kwargs)
 
         margin = 0.65 * inch
 
-        # ── Cover frame: same margins as body but cover_callback
-        #    draws over entire page; frame just needs to exist.
         cover_frame = Frame(
             margin, margin,
             self.pagesize[0] - 2 * margin,
@@ -158,7 +167,6 @@ class IBDocTemplate(BaseDocTemplate):
             onPage=self._draw_cover
         )
 
-        # ── Body frame: top margin accounts for header chrome
         body_frame = Frame(
             margin,
             margin + 0.45 * inch,
@@ -174,33 +182,26 @@ class IBDocTemplate(BaseDocTemplate):
 
         self.addPageTemplates([cover_template, body_template])
 
-    # ── Cover: delegate to the provided callback ──
     def _draw_cover(self, canv, doc):
         self._cover_callback(canv, doc)
 
-    # ── Body chrome: header rule + footer ─────────
     def _draw_chrome(self, canv, doc):
         w, h = doc.pagesize
         margin = 0.65 * inch
 
-        # Top navy rule
         canv.setFillColor(NAVY)
         canv.rect(margin, h - margin, w - 2 * margin, 2, fill=1, stroke=0)
 
-        # Header label
         canv.setFont(FONT_REGULAR, 7)
         canv.setFillColor(MID_GREY)
         canv.drawRightString(w - margin, h - margin + 5, 'M&A INTELLIGENCE PLATFORM')
 
-        # Gold accent under header
         canv.setFillColor(ACCENT)
         canv.rect(margin, h - margin - 3, w - 2 * margin, 1.5, fill=1, stroke=0)
 
-        # Footer rule
         canv.setFillColor(RULE_GREY)
         canv.rect(margin, margin - 4, w - 2 * margin, 0.5, fill=1, stroke=0)
 
-        # Footer text
         canv.setFont(FONT_REGULAR, 6.5)
         canv.setFillColor(MID_GREY)
         disclaimer = ('For internal use only. Not for distribution. '
@@ -213,7 +214,7 @@ class IBDocTemplate(BaseDocTemplate):
 
 
 # ─────────────────────────────────────────────
-#  STYLE FACTORY  (all using FreeSans)
+#  STYLE FACTORY
 # ─────────────────────────────────────────────
 def build_styles():
     _ensure_fonts()
@@ -311,12 +312,13 @@ def kpi_card_table(kpis: list, col_count: int = 4):
         chunk = kpis[i:i + col_count]
         val_row, lbl_row = [], []
         for lbl, val, *delta in chunk:
-            v_text = val
-            if delta and delta[0]:
-                color_tag = 'green' if '+' in str(delta[0]) else 'red'
-                v_text = f'{val}  <font color="{color_tag}" size="8">{delta[0]}</font>'
-            val_row.append(Paragraph(v_text, styles['kpi_value']) if val else Paragraph('', styles['kpi_value']))
-            lbl_row.append(Paragraph(lbl.upper(), styles['kpi_label']))
+            v_text = val if val else ''
+            if delta and delta[0] and delta[0] != '':
+                color_tag = 'green' if '+' in str(delta[0]) else 'red' if '-' in str(delta[0]) else ''
+                if color_tag:
+                    v_text = f'{val}  <font color="{color_tag}" size="8">{delta[0]}</font>'
+            val_row.append(Paragraph(v_text, styles['kpi_value']) if v_text else Paragraph('', styles['kpi_value']))
+            lbl_row.append(Paragraph(lbl.upper(), styles['kpi_label']) if lbl else Paragraph('', styles['kpi_label']))
         rows.append(val_row)
         rows.append(lbl_row)
 
@@ -414,10 +416,10 @@ def company_comparison_table(m1, m2, ticker1, ticker2, styles):
     rows = [
         ['Metric', m1['name'], m2['name']],
         ['Ticker',        ticker1,                              ticker2],
-        ['Market Cap',    f"₹{m1.get('market_cap', 0)/1e9:,.1f}B",  f"₹{m2.get('market_cap', 0)/1e9:,.1f}B"],
-        ['Revenue (TTM)', f"₹{m1.get('revenue', 0)/1e9:,.1f}B",     f"₹{m2.get('revenue', 0)/1e9:,.1f}B"],
-        ['EBITDA',        f"₹{m1.get('ebitda', 0)/1e9:,.1f}B",      f"₹{m2.get('ebitda', 0)/1e9:,.1f}B"],
-        ['Net Income',    f"₹{m1.get('net_income', 0)/1e9:,.1f}B",  f"₹{m2.get('net_income', 0)/1e9:,.1f}B"],
+        ['Market Cap',    format_currency(m1.get('market_cap', 0), 'B'),  format_currency(m2.get('market_cap', 0), 'B')],
+        ['Revenue (TTM)', format_currency(m1.get('revenue', 0), 'B'),     format_currency(m2.get('revenue', 0), 'B')],
+        ['EBITDA',        format_currency(m1.get('ebitda', 0), 'B'),      format_currency(m2.get('ebitda', 0), 'B')],
+        ['Net Income',    format_currency(m1.get('net_income', 0), 'B'),  format_currency(m2.get('net_income', 0), 'B')],
         ['P/E Ratio',     f"{m1.get('pe_ratio', 0):.1f}x",           f"{m2.get('pe_ratio', 0):.1f}x"],
         ['EV/EBITDA',     f"{m1.get('ev_ebitda', 0):.1f}x",          f"{m2.get('ev_ebitda', 0):.1f}x"],
     ]
@@ -426,7 +428,7 @@ def company_comparison_table(m1, m2, ticker1, ticker2, styles):
 
 
 # ─────────────────────────────────────────────
-#  MATPLOTLIB CHART HELPERS
+#  MATPLOTLIB CHART HELPERS (Fixed)
 # ─────────────────────────────────────────────
 def _ib_chart_style(ax, title='', xlabel='', ylabel=''):
     ax.set_facecolor('#F8F9FB')
@@ -458,43 +460,12 @@ def _fig_to_image(fig, width=6.2 * inch, height=3.2 * inch):
 
 # ─────────────────────────────────────────────
 #  NEXT-PAGE TEMPLATE SWITCH FLOWABLE
-#  FIX: Lets us explicitly switch from the Cover
-#  template to the Body template after page 1.
 # ─────────────────────────────────────────────
 from reportlab.platypus.flowables import Flowable
-
-class _SwitchToBody(Flowable):
-    """Zero-height flowable that switches the active PageTemplate to 'Body'."""
-    def __init__(self):
-        Flowable.__init__(self)
-        self.width  = 0
-        self.height = 0
-
-    def draw(self):
-        pass
-
-    def beforeDrawOn(self, canv, doc):
-        pass
-
-    def wrap(self, availW, availH):
-        self._doc = self._doctemplate if hasattr(self, '_doctemplate') else None
-        return 0, 0
-
-    def getSpaceAfter(self):
-        return 0
-
-    def getSpaceBefore(self):
-        return 0
-
-    # ReportLab calls this before placing the flowable
-    def identity(self, maxLen=None):
-        return '_SwitchToBody'
-
 
 class _NextTemplate(Flowable):
     """
     Reliably switches PageTemplate by name for the NEXT page.
-    Equivalent to doctemplate.handle_nextPageTemplate.
     """
     def __init__(self, template_name):
         Flowable.__init__(self)
@@ -546,180 +517,84 @@ class MAReportGenerator:
 
     def _money_b(self, value) -> str:
         try:
-            return f'₹{float(value)/1e9:,.1f}B'
+            return format_currency(value, 'B')
         except Exception:
-            return 'N/A'
+            return f'{CURRENCY_SYMBOL}0B'
 
     def _section(self, label):
         return section_rule(self.S, label)
 
-    def _plotly_fig_to_rl_image(self, fig, width_px, height_px, width_in, height_in):
-        """Convert Plotly figure to ReportLab image with explicit kaleido engine."""
-        img_bytes = pio.to_image(
-            fig,
-            format='png',
-            width=width_px,
-            height=height_px,
-            scale=2,
-            engine='kaleido',
-        )
-        return Image(BytesIO(img_bytes), width=width_in, height=height_in)
-
-    def _football_field_fallback_image(self):
-        """Matplotlib fallback for environments where Plotly static export is unavailable."""
-        dcf_value = self.dcf2.per_share
-        comps_value = self.comps2.per_share_weighted
-        precedent_value = self.precedent2.per_share_with_premium
-        current_price = self.dcf2.current_price
-
-        dcf_low = dcf_value * 0.85
-        dcf_high = dcf_value * 1.15
-
-        comps_low = self.comps2.per_share_range[0] if self.comps2.per_share_range[0] > 0 else comps_value * 0.8
-        comps_high = self.comps2.per_share_range[1] if self.comps2.per_share_range[1] > 0 else comps_value * 1.2
-
-        prec_low = self.precedent2.per_share_range[0] if self.precedent2.per_share_range[0] > 0 else precedent_value * 0.8
-        prec_high = self.precedent2.per_share_range[1] if self.precedent2.per_share_range[1] > 0 else precedent_value * 1.2
-
-        methods = ['DCF', 'Trading Comps', 'Precedent Transactions']
-        lows = [dcf_low, comps_low, prec_low]
-        highs = [dcf_high, comps_high, prec_high]
-        colors = ['#00B4FF', '#0EA5E9', '#14B8A6']
-
-        fig, ax = plt.subplots(figsize=(9, 4.2))
-        y = np.arange(len(methods))
-
-        for i in range(len(methods)):
-            width = max(0, highs[i] - lows[i])
-            ax.barh(y[i], width, left=lows[i], color=colors[i], alpha=0.78, height=0.55)
-            ax.text(
-                lows[i] + width / 2 if width > 0 else lows[i],
-                y[i],
-                f'₹{(lows[i] + width):,.0f}',
-                va='center',
-                ha='center',
-                fontsize=8,
-                color='white',
-                fontweight='bold',
-            )
-
-        if current_price and current_price > 0:
-            ax.axvline(current_price, color='#1A3A6B', linestyle='--', linewidth=1.8)
-            ax.text(current_price, len(methods) - 0.35, f'Current ₹{current_price:,.0f}',
-                    fontsize=7.5, color='#1A3A6B', ha='left', va='bottom')
-
-        valid_values = [v for v in [dcf_value, comps_value, precedent_value] if v > 0]
-        if valid_values:
-            weighted_avg = float(np.mean(valid_values))
-            ax.axvline(weighted_avg, color='#6B7280', linestyle=':', linewidth=1.8)
-            ax.text(weighted_avg, -0.35, f'Avg ₹{weighted_avg:,.0f}',
-                    fontsize=7.5, color='#6B7280', ha='left', va='top')
-
-        ax.set_yticks(y)
-        ax.set_yticklabels(methods)
-        _ib_chart_style(ax, title='Valuation Football Field', xlabel='Value per Share (₹)')
-        ax.grid(axis='x', color='#E5E7EB', linewidth=0.7, linestyle='--')
-        ax.invert_yaxis()
-        plt.tight_layout()
-        return _fig_to_image(fig, width=6.2 * inch, height=2.9 * inch)
-
-    def _sensitivity_fallback_image(self):
-        """Matplotlib fallback heatmap for WACC / growth sensitivity."""
-        matrix = self.dcf2.sensitivity_matrix or {}
-        wacc_vars = matrix.get('wacc_variations', [])
-        growth_vars = matrix.get('growth_variations', [])
-        value_factors = matrix.get('values', {})
-
-        if not wacc_vars:
-            wacc_vars = [self.dcf2.wacc - 0.01, self.dcf2.wacc, self.dcf2.wacc + 0.01]
-        if not growth_vars:
-            growth_vars = [
-                self.dcf2.terminal_growth - 0.005,
-                self.dcf2.terminal_growth,
-                self.dcf2.terminal_growth + 0.005,
-            ]
-
-        values = []
-        for w in wacc_vars:
-            row = []
-            for g in growth_vars:
-                if w in value_factors and g in value_factors.get(w, {}):
-                    val = value_factors[w][g]
-                else:
-                    if w > 0:
-                        val = self.dcf2.per_share * (self.dcf2.wacc / w) * ((1 + g) / (1 + self.dcf2.terminal_growth))
-                    else:
-                        val = self.dcf2.per_share
-                row.append(val)
-            values.append(row)
-
-        arr = np.array(values, dtype=float)
-        fig, ax = plt.subplots(figsize=(8.5, 4.6))
-        im = ax.imshow(arr, cmap='RdYlGn', aspect='auto')
-
-        ax.set_xticks(np.arange(len(growth_vars)))
-        ax.set_yticks(np.arange(len(wacc_vars)))
-        ax.set_xticklabels([f'{g:.1%}' for g in growth_vars])
-        ax.set_yticklabels([f'{w:.1%}' for w in wacc_vars])
-
-        for i in range(arr.shape[0]):
-            for j in range(arr.shape[1]):
-                ax.text(j, i, f'₹{arr[i, j]:,.0f}', ha='center', va='center', fontsize=7.5, color='#0A1628')
-
-        _ib_chart_style(
-            ax,
-            title='DCF Sensitivity: WACC vs Terminal Growth',
-            xlabel='Terminal Growth Rate',
-            ylabel='WACC',
-        )
-        cbar = fig.colorbar(im, ax=ax, shrink=0.9)
-        cbar.set_label('Per Share Value (₹)', fontsize=8)
-        plt.tight_layout()
-        return _fig_to_image(fig, width=6.2 * inch, height=3.3 * inch)
-
-    # ── Chart generators ─────────────────────
+    # ── Chart generators (Fixed) ─────────────────────
 
     def _football_field_image(self):
         try:
-            fig = self.val_model.create_football_field(self.dcf2, self.comps2, self.precedent2)
-            return self._plotly_fig_to_rl_image(
-                fig,
-                width_px=900,
-                height_px=420,
-                width_in=6.2 * inch,
-                height_in=2.9 * inch,
-            )
+            if hasattr(self.val_model, 'create_football_field'):
+                fig = self.val_model.create_football_field(self.dcf2, self.comps2, self.precedent2)
+                img_bytes = pio.to_image(fig, format='png', width=900, height=420, scale=2)
+                return Image(BytesIO(img_bytes), width=6.2 * inch, height=2.9 * inch)
+            else:
+                # Create a simple matplotlib football field as fallback
+                fig, ax = plt.subplots(figsize=(10, 4))
+                methods = ['DCF', 'Trading\nComps', 'Precedent\nTxns']
+                values = [
+                    getattr(self.dcf2, 'per_share', 0),
+                    getattr(self.comps2, 'per_share_weighted', 0),
+                    getattr(self.precedent2, 'per_share_with_premium', 0)
+                ]
+                
+                bars = ax.bar(methods, values, color=[BLUE, LIGHT_BLUE, ACCENT], width=0.6)
+                
+                for bar, val in zip(bars, values):
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
+                           f'{CURRENCY_SYMBOL}{val:.0f}', ha='center', va='bottom', fontweight='bold')
+                
+                ax.axhline(y=self.dcf2.current_price, color=NEGATIVE_RED, linestyle='--', 
+                          label=f'Current Price: {CURRENCY_SYMBOL}{self.dcf2.current_price:.0f}')
+                ax.legend()
+                _ib_chart_style(ax, title='Valuation Football Field', ylabel=f'{CURRENCY_SYMBOL} per Share')
+                plt.tight_layout()
+                return _fig_to_image(fig, width=6.2 * inch, height=2.9 * inch)
         except Exception as e:
-            print(f'Football field Plotly export failed, using fallback: {e}')
-            try:
-                return self._football_field_fallback_image()
-            except Exception as fallback_err:
-                print(f'Football field unavailable: {fallback_err}')
-                return Paragraph('Chart unavailable.', self.S['body_small'])
+            print(f'Football field unavailable: {e}')
+            return Paragraph('Chart unavailable.', self.S['body_small'])
 
     def _sensitivity_image(self):
         try:
-            fig = self.val_model.create_sensitivity_heatmap(self.dcf2)
-            return self._plotly_fig_to_rl_image(
-                fig,
-                width_px=900,
-                height_px=480,
-                width_in=6.2 * inch,
-                height_in=3.3 * inch,
-            )
+            if hasattr(self.val_model, 'create_sensitivity_heatmap'):
+                fig = self.val_model.create_sensitivity_heatmap(self.dcf2)
+                img_bytes = pio.to_image(fig, format='png', width=900, height=480, scale=2)
+                return Image(BytesIO(img_bytes), width=6.2 * inch, height=3.3 * inch)
+            else:
+                # Create simple sensitivity table as fallback
+                fig, ax = plt.subplots(figsize=(10, 6))
+                wacc_range = np.arange(0.08, 0.14, 0.01)
+                growth_range = np.arange(0.02, 0.06, 0.005)
+                
+                sensitivity = np.zeros((len(growth_range), len(wacc_range)))
+                for i, g in enumerate(growth_range):
+                    for j, w in enumerate(wacc_range):
+                        sensitivity[i, j] = self.dcf2.per_share * (wacc_range.mean() / w) * ((1+g)/(1+growth_range.mean()))
+                
+                im = ax.imshow(sensitivity, cmap='RdYlGn', aspect='auto', origin='lower')
+                ax.set_xticks(range(len(wacc_range)))
+                ax.set_yticks(range(len(growth_range)))
+                ax.set_xticklabels([f'{w*100:.0f}%' for w in wacc_range])
+                ax.set_yticklabels([f'{g*100:.1f}%' for g in growth_range])
+                ax.set_xlabel('WACC')
+                ax.set_ylabel('Terminal Growth Rate')
+                ax.set_title('DCF Sensitivity Analysis')
+                plt.colorbar(im, label=f'{CURRENCY_SYMBOL}/share')
+                plt.tight_layout()
+                return _fig_to_image(fig, width=6.2 * inch, height=3.3 * inch)
         except Exception as e:
-            print(f'Sensitivity Plotly export failed, using fallback: {e}')
-            try:
-                return self._sensitivity_fallback_image()
-            except Exception as fallback_err:
-                print(f'Sensitivity chart unavailable: {fallback_err}')
-                return Paragraph('Chart unavailable.', self.S['body_small'])
+            print(f'Sensitivity chart unavailable: {e}')
+            return Paragraph('Chart unavailable.', self.S['body_small'])
 
     def _dcf_waterfall_image(self):
         try:
             fig, ax = plt.subplots(figsize=(9, 4.5))
             labels  = ['Stage 1\nHigh Growth', 'Stage 2\nTransition', 'Terminal\nValue', 'Enterprise\nValue']
-            s1, s2, tv = self.dcf2.stage1_pv, self.dcf2.stage2_pv, self.dcf2.terminal_pv
+            s1, s2, tv = getattr(self.dcf2, 'stage1_pv', 0), getattr(self.dcf2, 'stage2_pv', 0), getattr(self.dcf2, 'terminal_pv', 0)
             ev = s1 + s2 + tv
             values = [s1, s2, tv, ev]
             bar_colors = ['#1A3A6B', '#2E5FA3', '#4A7EC7', '#C8A84B']
@@ -730,7 +605,7 @@ class MAReportGenerator:
             for bar, val in zip(bars, values):
                 h = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width() / 2., h + 2,
-                        f'₹{val/1e9:.0f}B', ha='center', va='bottom',
+                        f'{CURRENCY_SYMBOL}{val/1e9:.0f}B', ha='center', va='bottom',
                         fontsize=8.5, fontweight='bold', color='#0A1628')
 
             for i in range(2):
@@ -740,7 +615,7 @@ class MAReportGenerator:
                 ax.plot([x0, x1], [y / 1e9, y / 1e9], color='#D1D5DB',
                         linewidth=0.8, linestyle='--', zorder=2)
 
-            _ib_chart_style(ax, title='DCF Enterprise Value Waterfall', ylabel='₹ Billion')
+            _ib_chart_style(ax, title='DCF Enterprise Value Waterfall', ylabel=f'{CURRENCY_SYMBOL} Billion')
             ax.set_ylim(0, max(v / 1e9 for v in values) * 1.2)
             plt.tight_layout()
             return _fig_to_image(fig, width=6.2 * inch, height=3.2 * inch)
@@ -749,40 +624,60 @@ class MAReportGenerator:
             return Paragraph('Chart unavailable.', self.S['body_small'])
 
     def _synergy_chart_image(self):
+        """Fixed synergy chart that displays correctly"""
         try:
-            rev  = self.synergies.get('annual_rev', 0)  / 1e9
-            cost = self.synergies.get('annual_cost', 0) / 1e9
+            # Get synergy values with proper defaults
+            rev_syn = float(self.synergies.get('annual_rev', 0)) if self.synergies.get('annual_rev') else 0
+            cost_syn = float(self.synergies.get('annual_cost', 0)) if self.synergies.get('annual_cost') else 0
+            total_annual = rev_syn + cost_syn
+            
+            pv_rev = float(self.synergies.get('pv_rev', 0)) if self.synergies.get('pv_rev') else 0
+            pv_cost = float(self.synergies.get('pv_cost', 0)) if self.synergies.get('pv_cost') else 0
+            pv_total = pv_rev + pv_cost
+            
             categories = ['Revenue\nSynergies', 'Cost\nSynergies', 'Total\nSynergies']
-            values_ann = [rev, cost, rev + cost]
-            pv_vals = [
-                self.synergies.get('pv_rev', 0)   / 1e9,
-                self.synergies.get('pv_cost', 0)  / 1e9,
-                self.synergies.get('pv_total', 0) / 1e9,
-            ]
+            values_ann = [rev_syn / 1e9, cost_syn / 1e9, total_annual / 1e9]
+            pv_vals = [pv_rev / 1e9, pv_cost / 1e9, pv_total / 1e9]
 
-            fig, ax = plt.subplots(figsize=(7, 3.5))
+            fig, ax = plt.subplots(figsize=(7, 4))
             x = np.arange(len(categories))
             w = 0.35
-            b1 = ax.bar(x - w / 2, values_ann, w, label='Annual Run-Rate',
-                        color='#1A3A6B', zorder=3, edgecolor='white')
-            b2 = ax.bar(x + w / 2, pv_vals,    w, label='Present Value',
-                        color='#C8A84B', zorder=3, edgecolor='white')
+            b1 = ax.bar(x - w/2, values_ann, w, label='Annual Run-Rate',
+                        color='#1A3A6B', zorder=3, edgecolor='white', alpha=0.8)
+            b2 = ax.bar(x + w/2, pv_vals, w, label='Present Value',
+                        color='#C8A84B', zorder=3, edgecolor='white', alpha=0.8)
 
-            for bar in list(b1) + list(b2):
+            # Add value labels
+            for bar in b1:
                 h = bar.get_height()
-                if h > 0:
-                    ax.text(bar.get_x() + bar.get_width() / 2., h + 0.02,
-                            f'₹{h:.1f}B', ha='center', va='bottom', fontsize=7.5,
-                            color='#0A1628', fontweight='bold')
+                if h > 0.01:
+                    ax.text(bar.get_x() + bar.get_width()/2., h + 0.05,
+                            f'{CURRENCY_SYMBOL}{h:.1f}B', ha='center', va='bottom', 
+                            fontsize=7.5, fontweight='bold', color='#0A1628')
+            
+            for bar in b2:
+                h = bar.get_height()
+                if h > 0.01:
+                    ax.text(bar.get_x() + bar.get_width()/2., h + 0.05,
+                            f'{CURRENCY_SYMBOL}{h:.1f}B', ha='center', va='bottom',
+                            fontsize=7.5, fontweight='bold', color='#0A1628')
 
             ax.set_xticks(x)
             ax.set_xticklabels(categories)
-            ax.legend(fontsize=8, framealpha=0)
-            _ib_chart_style(ax, title='Synergy Summary', ylabel='₹ Billion')
+            ax.legend(fontsize=8, framealpha=0, loc='upper left')
+            _ib_chart_style(ax, title='Synergy Summary', ylabel=f'{CURRENCY_SYMBOL} Billion')
+            
+            # Adjust y-axis to show values clearly
+            max_val = max(max(values_ann), max(pv_vals))
+            ax.set_ylim(0, max_val * 1.25 if max_val > 0 else 1)
+            
             plt.tight_layout()
-            return _fig_to_image(fig, width=5.0 * inch, height=2.8 * inch)
+            return _fig_to_image(fig, width=5.5 * inch, height=3.0 * inch)
         except Exception as e:
-            return Paragraph('Chart unavailable.', self.S['body_small'])
+            print(f'Synergy chart error: {e}')
+            # Return a text fallback instead of error
+            return Paragraph(f'Synergy data: Revenue {self._money_b(rev_syn)}, Cost {self._money_b(cost_syn)}', 
+                           self.S['body_small'])
 
     def _add_ai_assumptions_section(self, story):
         """Add a section showing AI-generated assumptions if they're active."""
@@ -885,7 +780,6 @@ class MAReportGenerator:
     def _build_cover(self, canv, doc):
         """
         Draws the full-bleed cover on the canvas.
-        Called as the onPage callback for the 'Cover' PageTemplate.
         """
         w, h = A4
         margin = 0.65 * inch
@@ -984,12 +878,8 @@ class MAReportGenerator:
 
         story = []
 
-        # ── FIX: The cover page is drawn entirely by _build_cover via the
-        #    'Cover' PageTemplate onPage callback. We push a NextPageTemplate
-        #    flowable so that the VERY FIRST page break switches to 'Body'.
-        #    Then we immediately break to start body content on page 2.
         story.append(_NextTemplate('Body'))
-        story.append(PageBreak())   # end page 1 (cover) → start page 2 (body)
+        story.append(PageBreak())
 
         # ════════════════════════════════════════
         #  1. EXECUTIVE SUMMARY
@@ -1007,14 +897,14 @@ class MAReportGenerator:
         offer_price  = self.dcf2.current_price * (1 + self.deal_terms.get('premium', 30) / 100)
 
         kpis = [
-            ('DCF Value / Share',    f'₹{self.dcf2.per_share:,.0f}',   f'{self.dcf2.implied_premium:+.0f}%'),
-            ('Trading Comps',        f'₹{self.comps2.per_share_weighted:,.0f}', ''),
-            ('Precedent Txns',       f'₹{self.precedent2.per_share_with_premium:,.0f}', ''),
-            ('Blended Avg',          f'₹{weighted_avg:,.0f}',          ''),
-            ('Offer Price',          f'₹{offer_price:,.0f}',           f'+{self.deal_terms.get("premium",30)}%'),
+            ('DCF Value / Share',    f'{CURRENCY_SYMBOL}{self.dcf2.per_share:,.0f}',   f'{self.dcf2.implied_premium:+.0f}%'),
+            ('Trading Comps',        f'{CURRENCY_SYMBOL}{self.comps2.per_share_weighted:,.0f}', ''),
+            ('Precedent Txns',       f'{CURRENCY_SYMBOL}{self.precedent2.per_share_with_premium:,.0f}', ''),
+            ('Blended Avg',          f'{CURRENCY_SYMBOL}{weighted_avg:,.0f}',          ''),
+            ('Offer Price',          f'{CURRENCY_SYMBOL}{offer_price:,.0f}',           f'+{self.deal_terms.get("premium",30)}%'),
             ('Offer Premium',        f'{self.deal_terms.get("premium",30)}%', ''),
             ('EPS Accretion / (Dil)',f'{self.accretion:+.1f}%',        ''),
-            ('Current Price',        f'₹{self.dcf2.current_price:,.2f}', ''),
+            ('Current Price',        f'{CURRENCY_SYMBOL}{self.dcf2.current_price:,.2f}', ''),
         ]
         story.append(kpi_card_table(kpis, col_count=4))
         story.append(Spacer(1, 0.15 * inch))
@@ -1024,9 +914,9 @@ class MAReportGenerator:
             f'({self.company2.ticker}) as a potential acquisition target for <b>{self.m1["name"]}</b> '
             f'({self.company1.ticker}). Three independent valuation methodologies — discounted cash flow, '
             f'trading comparables, and precedent transactions — converge on a blended implied value of '
-            f'<b>₹{weighted_avg:,.0f} per share</b>, representing a '
+            f'<b>{CURRENCY_SYMBOL}{weighted_avg:,.0f} per share</b>, representing a '
             f'<b>{self.dcf2.implied_premium:+.0f}%</b> premium to the current trading price. '
-            f'The proposed offer price of <b>₹{offer_price:,.0f}</b> implies a '
+            f'The proposed offer price of <b>{CURRENCY_SYMBOL}{offer_price:,.0f}</b> implies a '
             f'<b>{self.deal_terms.get("premium", 30)}%</b> control premium. '
             f'On an accretion/dilution basis, the transaction is projected to be '
             f'<b>{"accretive" if self.accretion >= 0 else "dilutive"}</b> to acquirer EPS '
@@ -1044,13 +934,13 @@ class MAReportGenerator:
 
         deal_rows = [
             ['Parameter', 'Value', 'Notes'],
-            ['Target Current Share Price',  f'₹{self.dcf2.current_price:,.2f}',          'As at date of analysis'],
+            ['Target Current Share Price',  f'{CURRENCY_SYMBOL}{self.dcf2.current_price:,.2f}',          'As at date of analysis'],
             ['Offer Premium',               f'{self.deal_terms.get("premium", 30):.1f}%', 'Over last close'],
-            ['Implied Offer Price',         f'₹{offer_price:,.2f}',                      'Per share'],
+            ['Implied Offer Price',         f'{CURRENCY_SYMBOL}{offer_price:,.2f}',                      'Per share'],
             ['Cash Consideration',          f'{self.deal_terms.get("cash_pct", 60):.0f}%',''],
             ['Stock Consideration',         f'{100 - self.deal_terms.get("cash_pct", 60):.0f}%', ''],
-            ['Acquirer Standalone EPS',     f'₹{self.acquirer_eps:,.2f}' if self.acquirer_eps else 'N/A', ''],
-            ['Pro-Forma EPS',               f'₹{self.pro_forma_eps:,.2f}' if self.pro_forma_eps else 'N/A', ''],
+            ['Acquirer Standalone EPS',     f'{CURRENCY_SYMBOL}{self.acquirer_eps:,.2f}' if self.acquirer_eps else 'N/A', ''],
+            ['Pro-Forma EPS',               f'{CURRENCY_SYMBOL}{self.pro_forma_eps:,.2f}' if self.pro_forma_eps else 'N/A', ''],
             ['EPS Accretion / (Dilution)',  f'{self.accretion:+.1f}%',                   'vs Acquirer standalone'],
         ]
         story.append(ib_table(deal_rows,
@@ -1075,11 +965,11 @@ class MAReportGenerator:
         story.append(Paragraph('Target — Additional Detail', self.S['h2']))
         target_detail = [
             ['Metric', 'Value'],
-            ['52-Week High', f'₹{self.m2.get("week_52_high", 0):,.0f}'],
-            ['52-Week Low',  f'₹{self.m2.get("week_52_low",  0):,.0f}'],
-            ['Cash & Equivalents', f'₹{self.m2.get("cash", 0)/1e9:,.1f}B'],
-            ['Total Debt',         f'₹{self.m2.get("total_debt", 0)/1e9:,.1f}B'],
-            ['Net Debt',           f'₹{(self.m2.get("total_debt", 0) - self.m2.get("cash", 0))/1e9:,.1f}B'],
+            ['52-Week High', f'{CURRENCY_SYMBOL}{self.m2.get("week_52_high", 0):,.0f}'],
+            ['52-Week Low',  f'{CURRENCY_SYMBOL}{self.m2.get("week_52_low",  0):,.0f}'],
+            ['Cash & Equivalents', format_currency(self.m2.get("cash", 0), 'B')],
+            ['Total Debt',         format_currency(self.m2.get("total_debt", 0), 'B')],
+            ['Net Debt',           format_currency(self.m2.get("total_debt", 0) - self.m2.get("cash", 0), 'B')],
         ]
         story.append(ib_table(target_detail, col_widths=[3.0 * inch, 3.0 * inch], font_size=9))
         story.append(PageBreak())
@@ -1105,25 +995,25 @@ class MAReportGenerator:
         story.append(self._dcf_waterfall_image())
         story.append(Spacer(1, 0.1 * inch))
 
-        ev = max(self.dcf2.enterprise_value, 1)
+        ev = max(getattr(self.dcf2, 'enterprise_value', 1), 1)
         dcf_rows = [
-            ['Component', '₹ Billion', '% of EV'],
+            ['Component', f'{CURRENCY_SYMBOL} Billion', '% of EV'],
             ['Stage 1 — High Growth FCF',
-             f'{self.dcf2.stage1_pv/1e9:.1f}',
-             f'{self.dcf2.stage1_pv/ev*100:.1f}%'],
+             f'{getattr(self.dcf2, "stage1_pv", 0)/1e9:.1f}',
+             f'{getattr(self.dcf2, "stage1_pv", 0)/ev*100:.1f}%'],
             ['Stage 2 — Transition FCF',
-             f'{self.dcf2.stage2_pv/1e9:.1f}',
-             f'{self.dcf2.stage2_pv/ev*100:.1f}%'],
+             f'{getattr(self.dcf2, "stage2_pv", 0)/1e9:.1f}',
+             f'{getattr(self.dcf2, "stage2_pv", 0)/ev*100:.1f}%'],
             ['Terminal Value (Gordon Growth)',
-             f'{self.dcf2.terminal_pv/1e9:.1f}',
-             f'{self.dcf2.terminal_pv/ev*100:.1f}%'],
+             f'{getattr(self.dcf2, "terminal_pv", 0)/1e9:.1f}',
+             f'{getattr(self.dcf2, "terminal_pv", 0)/ev*100:.1f}%'],
             ['Total Enterprise Value',
-             f'{self.dcf2.enterprise_value/1e9:.1f}', '100.0%'],
+             f'{getattr(self.dcf2, "enterprise_value", 0)/1e9:.1f}', '100.0%'],
             ['Less: Net Debt',
              f'({(self.m2.get("total_debt", 0) - self.m2.get("cash", 0))/1e9:.1f})', ''],
             ['Equity Value',
-             f'{self.dcf2.equity_value/1e9:.1f}', ''],
-            ['DCF Per Share', f'₹{self.dcf2.per_share:,.0f}', ''],
+             f'{getattr(self.dcf2, "equity_value", 0)/1e9:.1f}', ''],
+            ['DCF Per Share', f'{CURRENCY_SYMBOL}{getattr(self.dcf2, "per_share", 0):,.0f}', ''],
         ]
         story.append(ib_table(dcf_rows,
                               col_widths=[3.4 * inch, 1.5 * inch, 1.6 * inch],
@@ -1134,7 +1024,7 @@ class MAReportGenerator:
         proj_years = getattr(self.dcf2, 'projection_years', []) or []
         rev_proj   = getattr(self.dcf2, 'revenue_projections', []) or []
         fcf_proj   = getattr(self.dcf2, 'fcf_projections', []) or []
-        fcf_rows   = [['Year', 'Revenue (₹B)', 'FCF (₹B)', 'PV Factor', 'PV of FCF (₹B)']]
+        fcf_rows   = [['Year', f'Revenue ({CURRENCY_SYMBOL}B)', f'FCF ({CURRENCY_SYMBOL}B)', 'PV Factor', f'PV of FCF ({CURRENCY_SYMBOL}B)']]
         wacc = getattr(self.dcf2, 'wacc', 0) or 0
         for i, yr in enumerate(proj_years):
             rev = rev_proj[i] if i < len(rev_proj) else 0
@@ -1190,7 +1080,7 @@ class MAReportGenerator:
             if ppa_result:
                 story.append(Paragraph('Purchase Price Allocation (PPA)', self.S['h2']))
                 ppa_rows = [
-                    ['Component', '₹ Billion'],
+                    ['Component', f'{CURRENCY_SYMBOL} Billion'],
                     ['Purchase Price',           f'{ppa_result.get("purchase_price", 0)/1e9:.2f}'],
                     ['Target Book Value',         f'{ppa_result.get("target_book_value", 0)/1e9:.2f}'],
                     ['Tangible Book Value',       f'{ppa_result.get("target_tangible_book_value", 0)/1e9:.2f}'],
@@ -1214,20 +1104,20 @@ class MAReportGenerator:
                 ['Annual Interest Expense',        self._money_b(ppa.get('annual_interest', 0))],
                 ['After-Tax Interest Expense',     self._money_b(ppa.get('annual_interest_after_tax', 0))],
                 ['Total Annual PPA Impact',        self._money_b(ppa.get('total_annual_impact', 0))],
-                ['Impact on Pro Forma EPS',        f'₹{ppa.get("impact_per_share", 0):.2f}'],
+                ['Impact on Pro Forma EPS',        f'{CURRENCY_SYMBOL}{ppa.get("impact_per_share", 0):.2f}'],
             ]
             story.append(Paragraph('PPA Impact Summary', self.S['h2']))
             story.append(ib_table(ppa_metrics_rows, col_widths=[3.5 * inch, 3.0 * inch], font_size=9))
         else:
             deal_mech_rows = [
                 ['Parameter', 'Value'],
-                ['Target Price',               f'₹{self.dcf2.current_price:,.2f}'],
-                ['Offer Price',                f'₹{offer_price:,.2f}'],
+                ['Target Price',               f'{CURRENCY_SYMBOL}{self.dcf2.current_price:,.2f}'],
+                ['Offer Price',                f'{CURRENCY_SYMBOL}{offer_price:,.2f}'],
                 ['Premium to Current',         f'{self.deal_terms.get("premium", 30)}%'],
                 ['Cash Component',             f'{self.deal_terms.get("cash_pct", 60)}%'],
                 ['Stock Component',            f'{100 - self.deal_terms.get("cash_pct", 60)}%'],
-                ['Acquirer Standalone EPS',    f'₹{self.acquirer_eps:,.2f}' if self.acquirer_eps else 'N/A'],
-                ['Pro-Forma EPS',              f'₹{self.pro_forma_eps:,.2f}' if self.pro_forma_eps else 'N/A'],
+                ['Acquirer Standalone EPS',    f'{CURRENCY_SYMBOL}{self.acquirer_eps:,.2f}' if self.acquirer_eps else 'N/A'],
+                ['Pro-Forma EPS',              f'{CURRENCY_SYMBOL}{self.pro_forma_eps:,.2f}' if self.pro_forma_eps else 'N/A'],
                 ['EPS Accretion / (Dilution)', f'{self.accretion:+.1f}%'],
             ]
             story.append(ib_table(deal_mech_rows, col_widths=[3.4 * inch, 3.1 * inch], font_size=9))
@@ -1235,32 +1125,56 @@ class MAReportGenerator:
         story.append(PageBreak())
 
         # ════════════════════════════════════════
-        #  6. SYNERGY ANALYSIS
+        #  6. SYNERGY ANALYSIS (Fixed)
         # ════════════════════════════════════════
         story += self._section('06  |  Synergy Analysis')
         story.append(Paragraph('Identified Synergies', self.S['h1']))
         story.append(thin_rule())
 
+        # Ensure synergy values are properly retrieved
+        annual_rev = float(self.synergies.get('annual_rev', 0)) if self.synergies.get('annual_rev') else 0
+        annual_cost = float(self.synergies.get('annual_cost', 0)) if self.synergies.get('annual_cost') else 0
+        annual_total = annual_rev + annual_cost
+        
+        pv_rev = float(self.synergies.get('pv_rev', 0)) if self.synergies.get('pv_rev') else 0
+        pv_cost = float(self.synergies.get('pv_cost', 0)) if self.synergies.get('pv_cost') else 0
+        pv_total = pv_rev + pv_cost
+        
+        market_cap = max(self.m2.get("market_cap", 1), 1)
+        
         syn_rows = [
             ['Synergy Type', 'Annual Run-Rate', 'Present Value', '% of Deal Value'],
             ['Revenue Synergies',
-             self._money_b(self.synergies.get('annual_rev', 0)),
-             self._money_b(self.synergies.get('pv_rev', 0)),
-             f'{self.synergies.get("pv_rev", 0)/(self.m2.get("market_cap", 1)+1)*100:.1f}%'],
+             self._money_b(annual_rev),
+             self._money_b(pv_rev),
+             f'{pv_rev/market_cap*100:.1f}%' if pv_rev > 0 else '0.0%'],
             ['Cost Synergies',
-             self._money_b(self.synergies.get('annual_cost', 0)),
-             self._money_b(self.synergies.get('pv_cost', 0)),
-             f'{self.synergies.get("pv_cost", 0)/(self.m2.get("market_cap", 1)+1)*100:.1f}%'],
+             self._money_b(annual_cost),
+             self._money_b(pv_cost),
+             f'{pv_cost/market_cap*100:.1f}%' if pv_cost > 0 else '0.0%'],
             ['Total Synergies',
-             self._money_b(self.synergies.get('annual_total', 0)),
-             self._money_b(self.synergies.get('pv_total', 0)),
-             f'{self.synergies.get("pv_total", 0)/(self.m2.get("market_cap", 1)+1)*100:.1f}%'],
+             self._money_b(annual_total),
+             self._money_b(pv_total),
+             f'{pv_total/market_cap*100:.1f}%'],
         ]
         story.append(ib_table(syn_rows,
                               col_widths=[2.0 * inch, 1.6 * inch, 1.6 * inch, 1.3 * inch],
                               font_size=9))
         story.append(Spacer(1, 0.15 * inch))
+        
+        # Add synergy chart
         story.append(self._synergy_chart_image())
+        
+        # Add synergy narrative
+        if annual_total > 0 or pv_total > 0:
+            story.append(Spacer(1, 0.1 * inch))
+            synergy_narrative = (
+                f'Identified synergies total <b>{self._money_b(annual_total)}</b> on an annual run-rate basis, '
+                f'with a present value of <b>{self._money_b(pv_total)}</b>. '
+                f'This represents <b>{pv_total/market_cap*100:.1f}%</b> of the target\'s current market capitalization.'
+            )
+            story.append(Paragraph(synergy_narrative, self.S['body_small']))
+        
         story.append(PageBreak())
 
         # ════════════════════════════════════════
@@ -1270,8 +1184,11 @@ class MAReportGenerator:
         story.append(Paragraph('Key Modelling Assumptions', self.S['h1']))
         story.append(thin_rule())
         try:
-            assumptions_df = self.assumptions.to_dataframe()
-            story.append(df_to_ib_table(assumptions_df.head(25), font_size=8))
+            if hasattr(self.assumptions, 'to_dataframe'):
+                assumptions_df = self.assumptions.to_dataframe()
+                story.append(df_to_ib_table(assumptions_df.head(25), font_size=8))
+            else:
+                story.append(Paragraph('Assumptions data available in model configuration.', self.S['body']))
         except Exception as e:
             story.append(Paragraph(f'Assumptions data unavailable: {e}', self.S['body_small']))
         story.append(PageBreak())
@@ -1298,7 +1215,7 @@ class MAReportGenerator:
         else:
             if self.accretion > 5 and self.dcf2.implied_premium < 30:
                 recommendation, rec_color_hex = 'PROCEED', POSITIVE_GREEN
-            elif self.accretion > 0 or self.synergies.get('pv_total', 0) > self.m2.get('market_cap', 0) * 0.2:
+            elif self.accretion > 0 or pv_total > market_cap * 0.2:
                 recommendation, rec_color_hex = 'CONSIDER WITH CAUTION', CAUTION_AMBER
             else:
                 recommendation, rec_color_hex = 'DO NOT PROCEED', NEGATIVE_RED
@@ -1335,7 +1252,7 @@ class MAReportGenerator:
             f'Valuation: Target assessed as {getattr(self.dcf2, "fairness_rating", "fairly valued").lower()} '
             f'({self.dcf2.implied_premium:+.0f}% premium to DCF intrinsic value)',
             f'Accretion/Dilution: {self.accretion:+.1f}% impact on acquirer standalone EPS',
-            f'Synergy Value: ₹{self.synergies.get("pv_total", 0)/1e9:.1f}B present value of identified synergies',
+            f'Synergy Value: {self._money_b(pv_total)} present value of identified synergies',
             f'Control Premium: {self.deal_terms.get("premium", 30)}% proposed vs '
             f'{getattr(self.precedent2, "control_premium", 0.25):.0%} sector average',
         ]
