@@ -488,6 +488,8 @@ def render_status_bar(acquirer: str, target: str, deal_value_b: float, premium_p
 def invalidate_cached_valuation():
     """Invalidate valuation outputs when interactive assumptions are changed."""
     st.session_state.valuation_results = None
+    st.session_state.acquirer_val_model = None
+    st.session_state.target_val_model = None
     st.session_state.last_assumptions_hash = None
 
 # Page config
@@ -507,6 +509,10 @@ if "assumptions" not in st.session_state:
     st.session_state.assumptions = ValuationAssumptions(ticker=target_ticker)
 if "valuation_results" not in st.session_state:
     st.session_state.valuation_results = None
+if "acquirer_val_model" not in st.session_state:
+    st.session_state.acquirer_val_model = None
+if "target_val_model" not in st.session_state:
+    st.session_state.target_val_model = None
 if "last_assumptions_hash" not in st.session_state:
     st.session_state.last_assumptions_hash = None
 if "assumptions_source_ticker" not in st.session_state:
@@ -783,7 +789,6 @@ def run_valuation(company, sector, assumptions_dict):
             "dcf": dcf,
             "comps": comps,
             "precedent": precedent,
-            "val_model": val_model
         }
     except Exception as e:
         render_banner("error", "Valuation Failed", escape(str(e)))
@@ -1481,6 +1486,9 @@ if st.session_state.get("run_analysis", False):
         acquirer_assumptions_dict["wacc"] = acquirer_wacc
         target_assumptions_dict = dict(assumptions_dict)
         target_assumptions_dict["wacc"] = target_wacc
+
+        st.session_state.acquirer_val_model = acquirer_model
+        st.session_state.target_val_model = target_model
         
         with custom_loading("Running DCF and comparable analysis..."):
             val1 = run_valuation(company1, sector1, acquirer_assumptions_dict)
@@ -1503,7 +1511,7 @@ if st.session_state.get("run_analysis", False):
     dcf2 = results["target"]["dcf"]
     comps2 = results["target"]["comps"]
     precedent2 = results["target"]["precedent"]
-    val2 = results["target"]["val_model"]
+    val2 = st.session_state.get("target_val_model")
     
     # Get metrics for display
     m1 = company1.get_key_metrics()
@@ -1692,7 +1700,7 @@ if st.session_state.get("run_analysis", False):
         if st.session_state.assumptions.has_ai_assumptions():
             render_banner("info", "AI Active", "DCF and comps use AI-generated inputs.")
         
-        val_model = results["target"]["val_model"]
+        val_model = st.session_state.get("target_val_model")
         
         # Valuation summary cards
         avg = np.mean([dcf2.per_share, comps2.per_share_weighted, precedent2.per_share_with_premium])
