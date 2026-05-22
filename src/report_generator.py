@@ -17,14 +17,15 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate, Frame
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-import plotly.io as pio
+from reportlab.lib.fonts import addMapping
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 from io import BytesIO
 
 # ─────────────────────────────────────────────
-#  FONT REGISTRATION  (FreeSans supports ₹)
+#  FONT REGISTRATION  (bundled Unicode font supports ₹)
 # ─────────────────────────────────────────────
 _FONTS_REGISTERED = False
 
@@ -34,67 +35,35 @@ FONT_OBLIQUE      = 'Helvetica-Oblique'
 FONT_BOLD_OBLIQUE = 'Helvetica-BoldOblique'
 
 
-def _register_font_family(family_name, regular_path, bold_path, italic_path, bold_italic_path):
-    pdfmetrics.registerFont(TTFont(f'{family_name}', str(regular_path)))
-    pdfmetrics.registerFont(TTFont(f'{family_name}-Bold', str(bold_path)))
-    pdfmetrics.registerFont(TTFont(f'{family_name}-Oblique', str(italic_path)))
-    pdfmetrics.registerFont(TTFont(f'{family_name}-BoldOblique', str(bold_italic_path)))
-    from reportlab.pdfbase.pdfmetrics import registerFontFamily
-    registerFontFamily(
-        family_name,
-        normal=f'{family_name}',
-        bold=f'{family_name}-Bold',
-        italic=f'{family_name}-Oblique',
-        boldItalic=f'{family_name}-BoldOblique',
-    )
-
 def _ensure_fonts():
     global _FONTS_REGISTERED, FONT_REGULAR, FONT_BOLD, FONT_OBLIQUE, FONT_BOLD_OBLIQUE
     if _FONTS_REGISTERED:
         return
-    candidates = [
-        (
-            'FreeSans',
-            Path('/usr/share/fonts/truetype/freefont/FreeSans.ttf'),
-            Path('/usr/share/fonts/truetype/freefont/FreeSansBold.ttf'),
-            Path('/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf'),
-            Path('/usr/share/fonts/truetype/freefont/FreeSansBoldOblique.ttf'),
-        ),
-        (
-            'SegoeUI',
-            Path(r'C:\WINDOWS\Fonts\segoeui.ttf'),
-            Path(r'C:\WINDOWS\Fonts\segoeuib.ttf'),
-            Path(r'C:\WINDOWS\Fonts\segoeuii.ttf'),
-            Path(r'C:\WINDOWS\Fonts\segoeuiz.ttf'),
-        ),
-    ]
-    last_error = None
-    for family_name, regular_path, bold_path, italic_path, bold_italic_path in candidates:
-        if not all(path.exists() for path in (regular_path, bold_path, italic_path, bold_italic_path)):
-            continue
-        try:
-            _register_font_family(family_name, regular_path, bold_path, italic_path, bold_italic_path)
-            FONT_REGULAR = family_name
-            FONT_BOLD = f'{family_name}-Bold'
-            FONT_OBLIQUE = f'{family_name}-Oblique'
-            FONT_BOLD_OBLIQUE = f'{family_name}-BoldOblique'
-            _FONTS_REGISTERED = True
-            return
-        except Exception as e:
-            last_error = e
+    font_path = Path(__file__).resolve().parent.parent / 'fonts' / 'NotoSans-Regular.ttf'
 
-    FONT_REGULAR = 'Helvetica'
-    FONT_BOLD = 'Helvetica-Bold'
-    FONT_OBLIQUE = 'Helvetica-Oblique'
-    FONT_BOLD_OBLIQUE = 'Helvetica-BoldOblique'
-    _FONTS_REGISTERED = True
     try:
-        if last_error:
-            print(f"Warning: could not register Unicode fonts: {last_error}. Falling back to Helvetica.")
-        else:
-            print("Warning: could not find Unicode fonts. Falling back to Helvetica; rupee symbols may not render.")
+        if not font_path.exists():
+            raise FileNotFoundError(f'Missing font file: {font_path}')
+
+        pdfmetrics.registerFont(TTFont('NotoSans', str(font_path)))
+        addMapping('NotoSans', 0, 0, 'NotoSans')
+        addMapping('NotoSans', 0, 1, 'NotoSans')
+        addMapping('NotoSans', 1, 0, 'NotoSans')
+        addMapping('NotoSans', 1, 1, 'NotoSans')
+
+        FONT_REGULAR = 'NotoSans'
+        FONT_BOLD = 'NotoSans'
+        FONT_OBLIQUE = 'NotoSans'
+        FONT_BOLD_OBLIQUE = 'NotoSans'
+        _FONTS_REGISTERED = True
+        print('Successfully registered bundled NotoSans font with ReportLab.')
     except Exception as e:
-        print(f"Warning: font fallback initialization failed: {e}")
+        FONT_REGULAR = 'Helvetica'
+        FONT_BOLD = 'Helvetica-Bold'
+        FONT_OBLIQUE = 'Helvetica-Oblique'
+        FONT_BOLD_OBLIQUE = 'Helvetica-BoldOblique'
+        _FONTS_REGISTERED = True
+        print(f'Warning: Could not register bundled NotoSans font. Rupee symbol may not render. Error: {e}')
 
 # Call once at import time
 _ensure_fonts()
@@ -557,18 +526,120 @@ class MAReportGenerator:
 
     def _football_field_image(self):
         try:
-            fig = self.val_model.create_football_field(self.dcf2, self.comps2, self.precedent2)
-            img_bytes = pio.to_image(fig, format='png', width=900, height=420, scale=2)
-            return Image(BytesIO(img_bytes), width=6.2 * inch, height=2.9 * inch)
+            dcf_value = float(getattr(self.dcf2, 'per_share', 0) or 0)
+            comps_value = float(getattr(self.comps2, 'per_share_weighted', 0) or 0)
+            precedent_value = float(getattr(self.precedent2, 'per_share_with_premium', 0) or 0)
+            current_price = float(getattr(self.dcf2, 'current_price', 0) or 0)
+            premium = float(self.deal_terms.get('premium', 30) or 30)
+            offer_price = current_price * (1 + premium / 100.0) if current_price > 0 else 0
+
+            methods = ['DCF', 'Trading Comps', 'Precedent Transactions']
+            values = [dcf_value, comps_value, precedent_value]
+            ranges = [
+                (dcf_value * 0.85, dcf_value * 1.15) if dcf_value > 0 else (0, 0),
+                tuple(getattr(self.comps2, 'per_share_range', (comps_value * 0.8, comps_value * 1.2)))
+                if comps_value > 0 else (0, 0),
+                tuple(getattr(self.precedent2, 'per_share_range', (precedent_value * 0.8, precedent_value * 1.2)))
+                if precedent_value > 0 else (0, 0),
+            ]
+            error_low = [max(value - low, 0) for value, (low, _) in zip(values, ranges)]
+            error_high = [max(high - value, 0) for value, (_, high) in zip(values, ranges)]
+
+            fig, ax = plt.subplots(figsize=(8, 4))
+            bars = ax.barh(
+                methods,
+                values,
+                xerr=[error_low, error_high],
+                capsize=5,
+                color=['#1A3A6B', '#2E5FA3', '#4A7EC7'],
+                edgecolor='white',
+                linewidth=1.5,
+                zorder=3,
+            )
+
+            max_value = max([current_price, offer_price, *[value + error for value, error in zip(values, error_high)]], default=1)
+            if current_price > 0:
+                ax.axvline(x=current_price, color='green', linestyle='--', linewidth=2, label=f'Current: ₹{current_price:,.0f}')
+            if offer_price > 0:
+                ax.axvline(x=offer_price, color='red', linestyle='--', linewidth=2, label=f'Offer: ₹{offer_price:,.0f}')
+
+            for bar, value in zip(bars, values):
+                ax.text(
+                    bar.get_width() + max_value * 0.02,
+                    bar.get_y() + bar.get_height() / 2,
+                    f'₹{value:,.0f}',
+                    va='center',
+                    fontsize=9,
+                    fontweight='bold',
+                    color='#0A1628',
+                )
+
+            ax.set_xlabel('Value per Share (₹)', fontsize=10)
+            ax.set_title('Valuation Football Field', fontsize=12, fontweight='bold')
+            ax.grid(axis='x', linestyle='--', alpha=0.7)
+            ax.set_xlim(left=0, right=max_value * 1.18 if max_value > 0 else 1)
+            ax.legend(loc='lower right')
+            plt.tight_layout()
+            return _fig_to_image(fig, width=6.2 * inch, height=2.9 * inch)
         except Exception as e:
             print(f'Football field unavailable: {e}')
             return Paragraph('Chart unavailable.', self.S['body_small'])
 
     def _sensitivity_image(self):
         try:
-            fig = self.val_model.create_sensitivity_heatmap(self.dcf2)
-            img_bytes = pio.to_image(fig, format='png', width=900, height=480, scale=2)
-            return Image(BytesIO(img_bytes), width=6.2 * inch, height=3.3 * inch)
+            sensitivity_matrix = getattr(self.dcf2, 'sensitivity_matrix', {}) or {}
+            wacc_vars = list(sensitivity_matrix.get('wacc_variations', []))
+            growth_vars = list(sensitivity_matrix.get('growth_variations', []))
+            value_factors = sensitivity_matrix.get('values', {}) or {}
+
+            if not wacc_vars:
+                wacc_vars = [getattr(self.dcf2, 'wacc', 0) - 0.01, getattr(self.dcf2, 'wacc', 0), getattr(self.dcf2, 'wacc', 0) + 0.01]
+            if not growth_vars:
+                growth_vars = [getattr(self.dcf2, 'terminal_growth', 0) - 0.005, getattr(self.dcf2, 'terminal_growth', 0), getattr(self.dcf2, 'terminal_growth', 0) + 0.005]
+
+            values = []
+            for wacc in wacc_vars:
+                row = []
+                for growth in growth_vars:
+                    if wacc in value_factors and growth in value_factors.get(wacc, {}):
+                        value = value_factors[wacc][growth]
+                    elif wacc > 0:
+                        value = float(getattr(self.dcf2, 'per_share', 0) or 0) * (getattr(self.dcf2, 'wacc', 0) / wacc) * ((1 + growth) / (1 + getattr(self.dcf2, 'terminal_growth', 0)))
+                    else:
+                        value = float(getattr(self.dcf2, 'per_share', 0) or 0)
+                    row.append(value)
+                values.append(row)
+
+            values_array = np.array(values, dtype=float)
+            fig, ax = plt.subplots(figsize=(8, 4.6))
+            cmap = LinearSegmentedColormap.from_list('sensitivity', ['#450A0A', '#1E2535', '#064E3B'])
+            image = ax.imshow(values_array, cmap=cmap, aspect='auto')
+
+            ax.set_xticks(np.arange(len(growth_vars)))
+            ax.set_xticklabels([f'{growth:.1%}' for growth in growth_vars])
+            ax.set_yticks(np.arange(len(wacc_vars)))
+            ax.set_yticklabels([f'{wacc:.1%}' for wacc in wacc_vars])
+
+            midpoint = float(np.nanmax(values_array) + np.nanmin(values_array)) / 2 if values_array.size else 0
+            for row_index, row in enumerate(values_array):
+                for column_index, value in enumerate(row):
+                    text_color = 'white' if value < midpoint else '#0A1628'
+                    ax.text(column_index, row_index, f'₹{value:,.0f}', ha='center', va='center', fontsize=8.5, fontweight='bold', color=text_color)
+
+            ax.set_xlabel('Terminal Growth Rate', fontsize=10)
+            ax.set_ylabel('WACC', fontsize=10)
+            ax.set_title('DCF Sensitivity: WACC vs Terminal Growth', fontsize=12, fontweight='bold')
+            ax.set_facecolor('#F8F9FB')
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_color('#D1D5DB')
+            ax.spines['bottom'].set_color('#D1D5DB')
+            ax.tick_params(colors='#6B7280', labelsize=8)
+            ax.grid(False)
+            colorbar = fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+            colorbar.set_label('Per Share Value (₹)')
+            plt.tight_layout()
+            return _fig_to_image(fig, width=6.2 * inch, height=3.3 * inch)
         except Exception as e:
             print(f'Sensitivity chart unavailable: {e}')
             return Paragraph('Chart unavailable.', self.S['body_small'])

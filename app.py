@@ -1614,7 +1614,7 @@ if st.session_state.get("run_analysis", False):
                     st.session_state.pdf_report_bytes = None
                     st.session_state.pdf_report_filename = None
                     render_banner("error", "Report Generation Failed", escape(str(e)))
-                    render_banner("info", "Dependency Note", "Make sure you have installed: pip install reportlab pillow plotly kaleido")
+                    render_banner("info", "Dependency Note", "Make sure you have installed: pip install reportlab pillow plotly matplotlib")
 
         if st.session_state.pdf_report_bytes and st.session_state.pdf_report_filename:
             st.download_button(
