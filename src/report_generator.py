@@ -458,6 +458,18 @@ def _fig_to_image(fig, width=6.2 * inch, height=3.2 * inch):
     return Image(BytesIO(buf.getvalue()), width=width, height=height)
 
 
+def _plotly_to_image_or_none(fig, width_px, height_px, width_in, height_in):
+    """Best-effort Plotly->PNG conversion; returns None when static export is unavailable."""
+    if fig is None:
+        return None
+    try:
+        img_bytes = pio.to_image(fig, format='png', width=width_px, height=height_px, scale=2)
+        return Image(BytesIO(img_bytes), width=width_in, height=height_in)
+    except Exception as e:
+        print(f'Plotly static export unavailable, using matplotlib fallback: {e}')
+        return None
+
+
 # ─────────────────────────────────────────────
 #  NEXT-PAGE TEMPLATE SWITCH FLOWABLE
 # ─────────────────────────────────────────────
@@ -548,30 +560,32 @@ class MAReportGenerator:
         try:
             if hasattr(self.val_model, 'create_football_field'):
                 fig = self.val_model.create_football_field(self.dcf2, self.comps2, self.precedent2)
-                img_bytes = pio.to_image(fig, format='png', width=900, height=420, scale=2)
-                return Image(BytesIO(img_bytes), width=6.2 * inch, height=2.9 * inch)
-            else:
-                # Create a simple matplotlib football field as fallback
-                fig, ax = plt.subplots(figsize=(10, 4))
-                methods = ['DCF', 'Trading\nComps', 'Precedent\nTxns']
-                values = [
-                    getattr(self.dcf2, 'per_share', 0),
-                    getattr(self.comps2, 'per_share_weighted', 0),
-                    getattr(self.precedent2, 'per_share_with_premium', 0)
-                ]
-                
-                bars = ax.bar(methods, values, color=[BLUE, LIGHT_BLUE, ACCENT], width=0.6)
-                
-                for bar, val in zip(bars, values):
-                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
-                           f'{CURRENCY_SYMBOL}{val:.0f}', ha='center', va='bottom', fontweight='bold')
-                
-                ax.axhline(y=self.dcf2.current_price, color=NEGATIVE_RED, linestyle='--', 
-                          label=f'Current Price: {CURRENCY_SYMBOL}{self.dcf2.current_price:.0f}')
-                ax.legend()
-                _ib_chart_style(ax, title='Valuation Football Field', ylabel=f'{CURRENCY_SYMBOL} per Share')
-                plt.tight_layout()
-                return _fig_to_image(fig, width=6.2 * inch, height=2.9 * inch)
+                plotly_img = _plotly_to_image_or_none(fig, 900, 420, 6.2 * inch, 2.9 * inch)
+                if plotly_img is not None:
+                    return plotly_img
+
+            # Matplotlib fallback (cloud-safe when kaleido/plotly static export is unavailable)
+            fig, ax = plt.subplots(figsize=(10, 4))
+            methods = ['DCF', 'Trading\nComps', 'Precedent\nTxns']
+            values = [
+                float(getattr(self.dcf2, 'per_share', 0) or 0),
+                float(getattr(self.comps2, 'per_share_weighted', 0) or 0),
+                float(getattr(self.precedent2, 'per_share_with_premium', 0) or 0)
+            ]
+
+            bars = ax.bar(methods, values, color=['#1A3A6B', '#2E5FA3', '#C8A84B'], width=0.6)
+
+            for bar, val in zip(bars, values):
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2,
+                        f'{CURRENCY_SYMBOL}{val:.0f}', ha='center', va='bottom', fontweight='bold')
+
+            current_price = float(getattr(self.dcf2, 'current_price', 0) or 0)
+            ax.axhline(y=current_price, color='#B91C1C', linestyle='--',
+                       label=f'Current Price: {CURRENCY_SYMBOL}{current_price:.0f}')
+            ax.legend()
+            _ib_chart_style(ax, title='Valuation Football Field', ylabel=f'{CURRENCY_SYMBOL} per Share')
+            plt.tight_layout()
+            return _fig_to_image(fig, width=6.2 * inch, height=2.9 * inch)
         except Exception as e:
             print(f'Football field unavailable: {e}')
             return Paragraph('Chart unavailable.', self.S['body_small'])
@@ -580,30 +594,32 @@ class MAReportGenerator:
         try:
             if hasattr(self.val_model, 'create_sensitivity_heatmap'):
                 fig = self.val_model.create_sensitivity_heatmap(self.dcf2)
-                img_bytes = pio.to_image(fig, format='png', width=900, height=480, scale=2)
-                return Image(BytesIO(img_bytes), width=6.2 * inch, height=3.3 * inch)
-            else:
-                # Create simple sensitivity table as fallback
-                fig, ax = plt.subplots(figsize=(10, 6))
-                wacc_range = np.arange(0.08, 0.14, 0.01)
-                growth_range = np.arange(0.02, 0.06, 0.005)
-                
-                sensitivity = np.zeros((len(growth_range), len(wacc_range)))
-                for i, g in enumerate(growth_range):
-                    for j, w in enumerate(wacc_range):
-                        sensitivity[i, j] = self.dcf2.per_share * (wacc_range.mean() / w) * ((1+g)/(1+growth_range.mean()))
-                
-                im = ax.imshow(sensitivity, cmap='RdYlGn', aspect='auto', origin='lower')
-                ax.set_xticks(range(len(wacc_range)))
-                ax.set_yticks(range(len(growth_range)))
-                ax.set_xticklabels([f'{w*100:.0f}%' for w in wacc_range])
-                ax.set_yticklabels([f'{g*100:.1f}%' for g in growth_range])
-                ax.set_xlabel('WACC')
-                ax.set_ylabel('Terminal Growth Rate')
-                ax.set_title('DCF Sensitivity Analysis')
-                plt.colorbar(im, label=f'{CURRENCY_SYMBOL}/share')
-                plt.tight_layout()
-                return _fig_to_image(fig, width=6.2 * inch, height=3.3 * inch)
+                plotly_img = _plotly_to_image_or_none(fig, 900, 480, 6.2 * inch, 3.3 * inch)
+                if plotly_img is not None:
+                    return plotly_img
+
+            # Create simple sensitivity heatmap fallback
+            fig, ax = plt.subplots(figsize=(10, 6))
+            wacc_range = np.arange(0.08, 0.14, 0.01)
+            growth_range = np.arange(0.02, 0.06, 0.005)
+
+            base_per_share = float(getattr(self.dcf2, 'per_share', 0) or 0)
+            sensitivity = np.zeros((len(growth_range), len(wacc_range)))
+            for i, g in enumerate(growth_range):
+                for j, w in enumerate(wacc_range):
+                    sensitivity[i, j] = base_per_share * (wacc_range.mean() / w) * ((1 + g) / (1 + growth_range.mean()))
+
+            im = ax.imshow(sensitivity, cmap='RdYlGn', aspect='auto', origin='lower')
+            ax.set_xticks(range(len(wacc_range)))
+            ax.set_yticks(range(len(growth_range)))
+            ax.set_xticklabels([f'{w*100:.0f}%' for w in wacc_range])
+            ax.set_yticklabels([f'{g*100:.1f}%' for g in growth_range])
+            ax.set_xlabel('WACC')
+            ax.set_ylabel('Terminal Growth Rate')
+            ax.set_title('DCF Sensitivity Analysis')
+            plt.colorbar(im, label=f'{CURRENCY_SYMBOL}/share')
+            plt.tight_layout()
+            return _fig_to_image(fig, width=6.2 * inch, height=3.3 * inch)
         except Exception as e:
             print(f'Sensitivity chart unavailable: {e}')
             return Paragraph('Chart unavailable.', self.S['body_small'])
