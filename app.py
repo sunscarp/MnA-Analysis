@@ -990,7 +990,7 @@ def build_memo_context(dcf2, synergies, accretion_value, offer_premium):
     key_drivers = [
         f"Valuation: Target is {fairness_text} vs current price ({dcf2.implied_premium:+.0f}% premium)",
         f"Accretion: Deal is {accretion_value:+.1f}% to Acquirer EPS",
-        f"Synergies: Identified Rs.{synergies.get('pv_total', 0)/1e9:.1f}B in PV synergies",
+        f"Synergies: Identified ₹{synergies.get('pv_total', 0)/1e9:.1f}B in PV synergies",
         f"Multiple: Offer represents {offer_premium:.0f}% premium to current price",
     ]
 
@@ -1036,7 +1036,7 @@ def create_sources_uses_table(offer_value: float, cash_pct: float, stock_pct: fl
             "New Debt Financing",
             "Total Sources"
         ],
-        "Amount (Rs.B)": [
+        "Amount (₹B)": [
             cash_from_acquirer / 1e9,
             stock_portion / 1e9,
             new_debt_needed / 1e9,
@@ -1062,7 +1062,7 @@ def create_sources_uses_table(offer_value: float, cash_pct: float, stock_pct: fl
             "Debt Repayment (Target)",
             "Total Uses"
         ],
-        "Amount (Rs.B)": [
+        "Amount (₹B)": [
             offer_value / 1e9,
             transaction_fees / 1e9,
             deal_costs / 1e9,
@@ -1188,7 +1188,7 @@ def create_pro_forma_balance_sheet(acquirer_bs: dict, target_bs: dict,
             "Total Equity",
             "Total Liabilities & Equity"
         ],
-        "Acquirer (Rs.B)": [
+        "Acquirer (₹B)": [
             acquirer_cash / 1e9,
             acquirer_receivables / 1e9,
             acquirer_inventory / 1e9,
@@ -1203,7 +1203,7 @@ def create_pro_forma_balance_sheet(acquirer_bs: dict, target_bs: dict,
             (acquirer_equity / 1e9),
             (acquirer_assets / 1e9)
         ],
-        "Target (Rs.B)": [
+        "Target (₹B)": [
             target_cash / 1e9,
             target_receivables / 1e9,
             target_inventory / 1e9,
@@ -1218,7 +1218,7 @@ def create_pro_forma_balance_sheet(acquirer_bs: dict, target_bs: dict,
             (target_equity / 1e9),
             (target_assets / 1e9)
         ],
-        "Pro Forma Adjustments (Rs.B)": [
+        "Pro Forma Adjustments (₹B)": [
             -cash_from_acquirer / 1e9,
             0,
             0,
@@ -1233,7 +1233,7 @@ def create_pro_forma_balance_sheet(acquirer_bs: dict, target_bs: dict,
             stock_consideration / 1e9,
             (new_debt + deferred_tax_liability + stock_consideration) / 1e9
         ],
-        "Pro Forma Combined (Rs.B)": [
+        "Pro Forma Combined (₹B)": [
             (acquirer_cash + target_cash - cash_from_acquirer) / 1e9,
             (acquirer_receivables + target_receivables) / 1e9,
             (acquirer_inventory + target_inventory) / 1e9,
@@ -1264,7 +1264,7 @@ def create_ppa_summary_table(ppa_result: dict) -> pd.DataFrame:
             "Less: Identifiable Intangibles (Brand, Customer Relationships, etc.)",
             "Equals: Goodwill"
         ],
-        "Amount (Rs.B)": [
+        "Amount (₹B)": [
             ppa_result["purchase_price"] / 1e9,
             -ppa_result["target_tangible_book_value"] / 1e9,
             ppa_result["ppe_write_up"] / 1e9,
@@ -2041,7 +2041,7 @@ if st.session_state.get("run_analysis", False):
             import plotly.graph_objects as go
             fig = go.Figure(data=[go.Pie(
                 labels=sources_df['Source'][:3].tolist(),
-                values=sources_df['Amount (Rs.B)'][:3].tolist(),
+                values=sources_df['Amount (₹B)'][:3].tolist(),
                 hole=0.4,
                 marker_colors=['#00B4FF', '#34D399', '#FBBF24']
             )])
@@ -2086,7 +2086,7 @@ if st.session_state.get("run_analysis", False):
         # Extract combined totals
         combined_row = pro_forma_df[pro_forma_df['Item'] == 'Total Assets']
         if not combined_row.empty:
-            combined_assets = combined_row['Pro Forma Combined (Rs.B)'].values[0]
+            combined_assets = combined_row['Pro Forma Combined (₹B)'].values[0]
 
             new_leverage = (financing['new_debt'] + target_debt) / (acquirer_metrics.get('market_cap', 1) + stock_portion) * 100
             render_metric_grid([
@@ -2229,7 +2229,7 @@ if st.session_state.get("run_analysis", False):
             <ul style='margin:0 0 0 18px; color:{THEME['text_secondary']}; line-height:1.8;'>
                 <li><strong style='color:{THEME['text']};'>Valuation:</strong> Target is <strong>{fairness_text}</strong> vs current price ({dcf2.implied_premium:+.0f}% premium)</li>
                 <li><strong style='color:{THEME['text']};'>Accretion:</strong> Deal is <strong>{accretion_val:+.1f}%</strong> to Acquirer EPS</li>
-                <li><strong style='color:{THEME['text']};'>Synergies:</strong> Identified Rs.{st.session_state.synergy_values.get('pv_total', 0)/1e9:.1f}B in PV synergies</li>
+                <li><strong style='color:{THEME['text']};'>Synergies:</strong> Identified ₹{st.session_state.synergy_values.get('pv_total', 0)/1e9:.1f}B in PV synergies</li>
                 <li><strong style='color:{THEME['text']};'>Multiple:</strong> Offer represents {offer_premium:.0f}% premium to current price</li>
             </ul>
             """,
