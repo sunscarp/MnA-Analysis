@@ -521,6 +521,24 @@ class MAReportGenerator:
         except Exception:
             return f'{CURRENCY_SYMBOL}0B'
 
+    def _normalized_synergy_values(self):
+        """Return synergy values with PV components normalized to annual shares."""
+        annual_rev = float(self.synergies.get('annual_rev', 0)) if self.synergies.get('annual_rev') else 0
+        annual_cost = float(self.synergies.get('annual_cost', 0)) if self.synergies.get('annual_cost') else 0
+        annual_total = annual_rev + annual_cost
+
+        pv_total = float(self.synergies.get('pv_total', 0)) if self.synergies.get('pv_total') else 0
+        pv_rev = float(self.synergies.get('pv_rev', 0)) if self.synergies.get('pv_rev') else 0
+        pv_cost = float(self.synergies.get('pv_cost', 0)) if self.synergies.get('pv_cost') else 0
+
+        if annual_total > 0 and pv_total > 0:
+            pv_rev = pv_total * (annual_rev / annual_total)
+            pv_cost = pv_total * (annual_cost / annual_total)
+        else:
+            pv_total = pv_rev + pv_cost
+
+        return annual_rev, annual_cost, annual_total, pv_rev, pv_cost, pv_total
+
     def _section(self, label):
         return section_rule(self.S, label)
 
@@ -626,14 +644,8 @@ class MAReportGenerator:
     def _synergy_chart_image(self):
         """Fixed synergy chart that displays correctly"""
         try:
-            # Get synergy values with proper defaults
-            rev_syn = float(self.synergies.get('annual_rev', 0)) if self.synergies.get('annual_rev') else 0
-            cost_syn = float(self.synergies.get('annual_cost', 0)) if self.synergies.get('annual_cost') else 0
-            total_annual = rev_syn + cost_syn
-            
-            pv_rev = float(self.synergies.get('pv_rev', 0)) if self.synergies.get('pv_rev') else 0
-            pv_cost = float(self.synergies.get('pv_cost', 0)) if self.synergies.get('pv_cost') else 0
-            pv_total = pv_rev + pv_cost
+            # Normalize component PVs so the chart matches the annual mix.
+            rev_syn, cost_syn, total_annual, pv_rev, pv_cost, pv_total = self._normalized_synergy_values()
             
             categories = ['Revenue\nSynergies', 'Cost\nSynergies', 'Total\nSynergies']
             values_ann = [rev_syn / 1e9, cost_syn / 1e9, total_annual / 1e9]
@@ -1131,14 +1143,8 @@ class MAReportGenerator:
         story.append(Paragraph('Identified Synergies', self.S['h1']))
         story.append(thin_rule())
 
-        # Ensure synergy values are properly retrieved
-        annual_rev = float(self.synergies.get('annual_rev', 0)) if self.synergies.get('annual_rev') else 0
-        annual_cost = float(self.synergies.get('annual_cost', 0)) if self.synergies.get('annual_cost') else 0
-        annual_total = annual_rev + annual_cost
-        
-        pv_rev = float(self.synergies.get('pv_rev', 0)) if self.synergies.get('pv_rev') else 0
-        pv_cost = float(self.synergies.get('pv_cost', 0)) if self.synergies.get('pv_cost') else 0
-        pv_total = pv_rev + pv_cost
+        # Normalize component PVs so table, chart, and narrative stay consistent.
+        annual_rev, annual_cost, annual_total, pv_rev, pv_cost, pv_total = self._normalized_synergy_values()
         
         market_cap = max(self.m2.get("market_cap", 1), 1)
         
