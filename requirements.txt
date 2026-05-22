@@ -9,3 +9,4 @@ pydantic
 openpyxl
 reportlab
 matplotlib
+kaleido
