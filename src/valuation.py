@@ -92,27 +92,44 @@ class ValuationModel:
         
         methods = ["DCF", "Trading Comps", "Precedent Transactions"]
         lows = [dcf_low, comps_low, prec_low]
-        highs = [dcf_high - dcf_low, comps_high - comps_low, prec_high - prec_low]
+        highs = [dcf_high, comps_high, prec_high]
         colors = ["#00B4FF", "#0EA5E9", "#14B8A6"]
         
         for i, method in enumerate(methods):
+            range_width = max(highs[i] - lows[i], 0)
+            midpoint = lows[i] + (range_width / 2 if range_width > 0 else 0)
             fig.add_trace(go.Bar(
                 y=[method],
-                x=[lows[i]],
+                x=[range_width],
+                base=[lows[i]],
                 orientation='h',
-                marker=dict(color=colors[i], opacity=0.3),
-                showlegend=False,
-                hoverinfo='skip'
-            ))
-            fig.add_trace(go.Bar(
-                y=[method],
-                x=[highs[i]],
-                orientation='h',
-                marker=dict(color=colors[i], opacity=0.7),
                 name=method,
-                text=[f"₹{lows[i] + highs[i]:,.0f}" if highs[i] > 0 else f"₹{lows[i]:,.0f}"],
+                marker=dict(color=colors[i], opacity=0.7),
+                text=[f"₹{lows[i]:,.0f} - ₹{highs[i]:,.0f}"],
                 textposition='inside',
-                insidetextanchor='middle'
+                insidetextanchor='middle',
+                hovertemplate=(
+                    f"<b>{method}</b><br>Low: ₹%{{{{base:,.0f}}}}<br>High: ₹%{{{{customdata:,.0f}}}}<extra></extra>"
+                ),
+                customdata=[highs[i]],
+            ))
+
+            fig.add_trace(go.Scatter(
+                x=[lows[i], highs[i]],
+                y=[method, method],
+                mode='lines',
+                line=dict(color=colors[i], width=6),
+                showlegend=False,
+                hoverinfo='skip',
+            ))
+
+            fig.add_trace(go.Scatter(
+                x=[lows[i], highs[i]],
+                y=[method, method],
+                mode='markers',
+                marker=dict(color=colors[i], size=8, symbol='line-ns-open'),
+                showlegend=False,
+                hoverinfo='skip',
             ))
         
         # Add reference lines
@@ -146,7 +163,7 @@ class ValuationModel:
             yaxis_title="Valuation Method",
             template="plotly_dark",
             height=350,
-            barmode='stack',
+            barmode='overlay',
             showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#94A3B8")),
             paper_bgcolor="#0F1117",
